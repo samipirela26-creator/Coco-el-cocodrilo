@@ -17,6 +17,16 @@ class Config:
         self.gemini_api_key = self._get_required_env('GEMINI_API_KEY')
         self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash')
 
+        # IAs de respaldo gratis (formato OpenAI), por si Gemini agota su cuota.
+        # Todas opcionales: las que queden vacías simplemente se saltan.
+        self.backup_keys = {
+            'GROQ_API_KEY': os.getenv('GROQ_API_KEY', ''),
+            'OPENROUTER_API_KEY': os.getenv('OPENROUTER_API_KEY', ''),
+            'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY', ''),
+            'ZHIPU_API_KEY': os.getenv('ZHIPU_API_KEY', ''),
+            'XAI_API_KEY': os.getenv('XAI_API_KEY', ''),
+        }
+
         # SQLite
         self.db_path = os.getenv('DB_PATH', 'gastos.db')
         self.initial_balance = float(os.getenv('INITIAL_BALANCE', '0'))

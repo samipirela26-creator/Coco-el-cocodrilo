@@ -2,6 +2,7 @@
 import datetime as dt
 import io
 import logging
+import random
 import signal
 import sys
 from telegram import Update
@@ -18,6 +19,39 @@ from src.bot.telegram_handler import (
 )
 
 logger = None
+
+# Recordatorio de Coco a las 22:00 (mismo horario que el resumen nocturno de
+# Larry, para aprovechar un hábito ya existente) -- SOLO se manda si ese día
+# no hubo ningún registro. Varias variantes para no repetir siempre la misma
+# frase (personalidad de Coco: humor ligero, nunca forzado).
+RECORDATORIOS_NOCTURNOS = [
+    "🐊 Buenas noches. No vi ningún movimiento suyo hoy en el libro mayor... "
+    "¿de verdad no gastó ni un centavo, o se le quedó algo por contarme?",
+    "🐊 Cierro caja por hoy y su cuenta sigue en blanco. Cuénteme aunque sea "
+    "un cafecito, así el banco no se queda con dudas.",
+    "🐊 Antes de dormir: ¿algo que registrar hoy? No hay prisa, pero no quiero "
+    "que se le escape nada del radar.",
+]
+
+
+async def send_nightly_reminder(context) -> None:
+    """Job diario 22:00: si el usuario no registró nada hoy, Coco le escribe
+    un recordatorio suave (nunca si ya registró algo)."""
+    db: DBClient = context.bot_data['db']
+    allowed_user_ids = context.bot_data.get('allowed_user_ids') or []
+    if not allowed_user_ids:
+        return
+
+    today_str = dt.datetime.now().strftime("%Y-%m-%d")
+    if db.has_transactions_on(today_str):
+        return
+
+    mensaje = random.choice(RECORDATORIOS_NOCTURNOS)
+    for user_id in allowed_user_ids:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=mensaje)
+        except Exception as e:
+            logger.error(f"No se pudo enviar el recordatorio nocturno a {user_id}: {e}")
 
 
 async def send_weekly_report(context) -> None:
@@ -68,7 +102,8 @@ def main():
         logger.info("=" * 50)
 
         logger.info(f"Inicializando conector Gemini (modelo: {config.gemini_model})...")
-        llm_client = GeminiClient(api_key=config.gemini_api_key, model=config.gemini_model)
+        llm_client = GeminiClient(api_key=config.gemini_api_key, model=config.gemini_model,
+                                   backup_keys=config.backup_keys)
 
         logger.info(f"Inicializando base de datos SQLite ({config.db_path})...")
         db = DBClient(
@@ -112,6 +147,14 @@ def main():
                 name="reporte_semanal",
             )
             logger.info("Job de reporte semanal (domingo 8:00 AM) programado.")
+
+            application.job_queue.run_daily(
+                send_nightly_reminder,
+                time=dt.time(hour=22, minute=0),
+                days=(0, 1, 2, 3, 4, 5, 6),
+                name="recordatorio_nocturno",
+            )
+            logger.info("Job de recordatorio nocturno (22:00) programado.")
         else:
             logger.warning(
                 "JobQueue no disponible (¿falta instalar python-telegram-bot[job-queue]?). "

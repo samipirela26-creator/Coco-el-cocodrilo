@@ -329,6 +329,36 @@ class DBClient:
         }
 
     # ------------------------------------------------------------------ #
+    # Racha de días registrando (para el recordatorio nocturno de Coco)
+    # ------------------------------------------------------------------ #
+
+    def has_transactions_on(self, fecha: str) -> bool:
+        """True si hay al menos una transacción con esa fecha (YYYY-MM-DD)."""
+        row = self._conn.execute(
+            "SELECT 1 FROM transactions WHERE fecha = ? LIMIT 1", (fecha,)
+        ).fetchone()
+        return row is not None
+
+    def get_current_streak(self, reference_date=None) -> int:
+        """Cuenta días consecutivos (terminando en reference_date, hoy por
+        defecto) con al menos una transacción registrada."""
+        from datetime import timedelta
+        day = reference_date or datetime.now().date()
+        if isinstance(day, str):
+            day = datetime.strptime(day, "%Y-%m-%d").date()
+        rows = self._conn.execute(
+            "SELECT DISTINCT fecha FROM transactions WHERE fecha <= ?",
+            (day.strftime("%Y-%m-%d"),)
+        ).fetchall()
+        dias_con_registro = {r[0] for r in rows}
+        racha = 0
+        cursor = day
+        while cursor.strftime("%Y-%m-%d") in dias_con_registro:
+            racha += 1
+            cursor -= timedelta(days=1)
+        return racha
+
+    # ------------------------------------------------------------------ #
     # Tasas de cambio (cache)
     # ------------------------------------------------------------------ #
 

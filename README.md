@@ -3,10 +3,10 @@
 Bot que registra tus gastos e ingresos escribiéndole en lenguaje natural
 ("Compré pan por 500", "Cobré el sueldo, 50000"), enviándole una foto
 (captura de una transferencia o de tu saldo en el BDV/Binance), o una nota
-de voz. Trackea tu plata en 4 billeteras independientes (BDV en Bs, Binance
-en USD, Efectivo en USD y Efectivo en COP), te muestra qué porcentaje de tu
-gasto va a cada categoría, además de un reporte semanal en imagen todos los
-domingos a las 8:00 AM.
+de voz. Trackea tu plata en 3 billeteras (BDV en Bs, Binance en USD y
+Efectivo, que junta dólares y pesos en cash en una sola vista), te muestra
+qué porcentaje de tu gasto va a cada categoría, además de un reporte
+semanal en imagen todos los domingos a las 8:00 AM.
 
 Construido reutilizando partes ya probadas del proyecto open source
 [telegram-bot-gastos-llm](https://github.com/juaiglesias/telegram-bot-gastos-llm)
@@ -49,8 +49,9 @@ Comandos del bot:
 - Foto de una captura de pantalla → ver sección "Fotos y capturas de pantalla".
 - Nota de voz → se transcribe y registra igual que un mensaje de texto (gasto,
   ingreso o ajuste de saldo).
-- `/saldo` → tus 4 billeteras (BDV, Binance, Efectivo USD, Efectivo COP), con
-  el equivalente en USD de tu saldo BDV a tasa BCV y Binance.
+- `/saldo` → BDV, Binance y Efectivo (dólares y pesos juntos, con el
+  equivalente combinado en cada moneda), más el equivalente en USD de tu
+  saldo BDV a tasa BCV y Binance.
 - `/saldo_inicial <monto> [moneda] [cuenta]` → fija el saldo de una billetera
   puntual. `cuenta` es obligatoria si `moneda` es USD (Binance o Efectivo).
   Ej: `/saldo_inicial 100000` (Bs, BDV), `/saldo_inicial 200 USD Binance`,
@@ -82,6 +83,35 @@ incrementan o decrementan, y una foto de saldo o una frase como "tengo 50
 dólares en efectivo" la puede **sobrescribir directo** (ver siguiente
 sección). Para USD, si el mensaje no menciona Binance/USDT/cripto
 explícitamente, Gemini asume `Efectivo` (el caso más común del día a día).
+
+Las dos filas de `Efectivo` (USD y COP) se guardan por separado internamente
+(porque Gemini necesita saber en qué moneda vino cada movimiento), pero
+`/saldo` las muestra **juntas como una sola vista** — por decisión del
+usuario, que vive cerca de la frontera con Colombia y maneja cash en ambas
+monedas indistintamente: cuánto hay en dólares, cuánto en pesos, y el
+equivalente combinado en cada una (a la tasa fija `COP_PER_USD`).
+
+### Resiliencia de IA (varios modelos + IAs de respaldo)
+
+Igual que el otro bot del usuario (asistente-bot / "Larry"), `src/llm/gemini_client.py`
+no depende del SDK `google-generativeai` (deprecado): llama a Gemini directo
+por REST con `urllib` (stdlib). Si el modelo configurado (`GEMINI_MODEL`,
+`gemini-3.5-flash` por defecto) se satura (429/500/503), prueba en orden los
+de `MODELOS` (`gemini-2.5-flash`, `gemini-2.5-flash-lite`,
+`gemini-3.1-flash-lite`). Si **todos** los modelos de Gemini fallan, el flujo
+de texto (no imagen/audio) prueba IAs de respaldo gratis, en este orden,
+usando la clave que tenga configurada en `.env` (se saltan solas si están
+vacías):
+
+| Proveedor  | Variable en `.env`   | Sacar clave gratis en |
+|------------|----------------------|------------------------|
+| Groq       | `GROQ_API_KEY`       | https://console.groq.com/keys |
+| OpenRouter | `OPENROUTER_API_KEY` | https://openrouter.ai/keys |
+| Mistral    | `MISTRAL_API_KEY`    | https://console.mistral.ai/api-keys |
+| Zhipu      | `ZHIPU_API_KEY`      | https://open.bigmodel.cn/usercenter/apikeys |
+| xAI        | `XAI_API_KEY`        | https://console.x.ai |
+
+Ninguna es obligatoria — el bot funciona solo con `GEMINI_API_KEY`.
 
 ### Tasas de cambio (BCV y Binance)
 

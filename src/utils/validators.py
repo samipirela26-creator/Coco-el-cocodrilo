@@ -26,8 +26,11 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
         Tupla (es_valido, mensaje_error)
     """
     tipo = data.get('tipo')
-    if tipo not in ('gasto', 'ingreso', 'ajuste_saldo'):
-        return False, "El campo 'tipo' debe ser 'gasto', 'ingreso' o 'ajuste_saldo'"
+    if tipo not in ('gasto', 'ingreso', 'ajuste_saldo', 'charla'):
+        return False, "El campo 'tipo' debe ser 'gasto', 'ingreso', 'ajuste_saldo' o 'charla'"
+
+    if tipo == 'charla':
+        return True, ""
 
     required_fields = ['monto', 'fecha', 'descripcion']
     if tipo != 'ajuste_saldo':

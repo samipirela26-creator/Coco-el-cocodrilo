@@ -1,15 +1,20 @@
 [Unit]
-Description=Bot de Telegram de finanzas personales
-After=network.target
+Description=Bot de Telegram de finanzas personales (Coco el Cocodrilo)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=CAMBIAR_USUARIO
 WorkingDirectory=/ruta/a/gastos-bot
 ExecStart=/ruta/a/gastos-bot/.venv/bin/python run.py
-Restart=on-failure
-RestartSec=5
 EnvironmentFile=/ruta/a/gastos-bot/.env
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+CPUWeight=20
+MemoryMax=300M
+NoNewPrivileges=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

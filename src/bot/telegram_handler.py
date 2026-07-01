@@ -29,7 +29,11 @@ def _is_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     allowed = context.bot_data.get('allowed_user_ids') or []
     if not allowed:
         return True
-    return update.effective_user.id in allowed
+    user_id = update.effective_user.id
+    if user_id in allowed:
+        return True
+    logger.warning(f"Acceso bloqueado: user_id {user_id} no está en ALLOWED_USER_IDS")
+    return False
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,7 +62,7 @@ También puedes enviarme:
 🎤 Una nota de voz describiendo el gasto o el saldo
 
 Comandos:
-/saldo - ver tus 4 billeteras (BDV, Binance, Efectivo USD, Efectivo COP)
+/saldo - ver tu saldo (BDV, Binance, y Efectivo con USD + COP juntos)
 /resumen - ver gastos del mes por categoría (con porcentajes)
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
@@ -79,11 +83,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 (También puedo crear categorías nuevas automáticamente si el gasto no encaja en ninguna,
 ej: "Gasto de Gio", "Comida en la calle".)
 
-👛 Billeteras que manejo (independientes entre sí):
+👛 Billeteras que manejo:
 • BDV (Bs) — tu cuenta bancaria en bolívares
 • Binance (USD) — tus dólares digitales/USDT
-• Efectivo (USD) — dólares en cash
-• Efectivo (COP) — pesos en cash
+• Efectivo — dólares y pesos (COP) en cash, juntos en /saldo con el
+  equivalente combinado en cada moneda (tasa fija: {fx.COP_PER_USD:,.0f} COP = 1 USD)
 
 📝 Cómo usar:
 Envía un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
@@ -93,7 +97,7 @@ Si no mencionas moneda, asumo Bs. Puedes decir "20 dólares" o "3000 pesos" para
 En USD, si no mencionas Binance/USDT/cripto, asumo que es Efectivo.
 
 Comandos:
-/saldo - tus 4 billeteras, con conversión BCV/Binance de tus Bs
+/saldo - tu saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de tus Bs
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
@@ -139,13 +143,25 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if binance:
             lines.append(f"   ↳ ≈ $ {bs_bdv / binance:,.2f} a tasa Binance")
         lines.append(f"{CUENTA_EMOJI['Binance']} Binance (USD): $ {usd_binance:,.2f}")
-        lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo (USD): $ {usd_efectivo:,.2f}")
-        lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo (COP): $ {cop_efectivo:,.2f}")
+
+        efectivo_cop_en_usd = cop_efectivo / fx.COP_PER_USD if fx.COP_PER_USD else 0.0
+        efectivo_total_usd = usd_efectivo + efectivo_cop_en_usd
+        efectivo_total_cop = efectivo_total_usd * fx.COP_PER_USD
+        lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo:")
+        lines.append(f"   ↳ $ {usd_efectivo:,.2f} dólares")
+        lines.append(f"   ↳ $ {cop_efectivo:,.2f} pesos (COP)")
+        lines.append(f"   ↳ Junto: $ {efectivo_total_usd:,.2f} si lo pasas todo a dólares")
+        lines.append(f"   ↳ Junto: $ {efectivo_total_cop:,.2f} si lo pasas todo a pesos")
 
         if binance:
-            total_usd = (bs_bdv / binance) + usd_binance + usd_efectivo
+            total_usd = (bs_bdv / binance) + usd_binance + efectivo_total_usd
             lines.append("")
-            lines.append(f"🌎 Total aprox. en USD (BDV a tasa Binance + Binance + Efectivo USD): $ {total_usd:,.2f}")
+            lines.append(f"🌎 Total aprox. en USD (BDV a tasa Binance + Binance + Efectivo): $ {total_usd:,.2f}")
+
+        racha = db.get_current_streak()
+        if racha > 0:
+            lines.append("")
+            lines.append(f"🔥 Racha: {racha} día{'s' if racha != 1 else ''} seguido{'s' if racha != 1 else ''} registrando")
 
         lines.append("")
         lines.append(_format_rates_block(bcv, binance))
@@ -271,6 +287,12 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # Guardado compartido (texto, voz, y fotos de transferencia)
 # ---------------------------------------------------------------------- #
 
+def _coco_line(respuesta: str) -> str:
+    """Linea de cierre con la voz de Coco, si el modelo mando una."""
+    respuesta = (respuesta or "").strip()
+    return f"\n\n🐊 {respuesta}" if respuesta else ""
+
+
 def format_confirmation_message(expense_data: dict, balance: float, cuenta: str) -> str:
     emoji = "💸" if expense_data['tipo'] == 'gasto' else "💵"
     tipo_str = "Gasto" if expense_data['tipo'] == 'gasto' else "Ingreso"
@@ -284,16 +306,16 @@ def format_confirmation_message(expense_data: dict, balance: float, cuenta: str)
 📅 Fecha: {expense_data['fecha']}
 📝 {expense_data['descripcion']}
 
-💰 Saldo en {cuenta} ({moneda}): {balance:,.2f}"""
+💰 Saldo en {cuenta} ({moneda}): {balance:,.2f}""" + _coco_line(expense_data.get('respuesta'))
 
 
-def format_ajuste_message(moneda: str, cuenta: str, anterior: float, nuevo: float) -> str:
+def format_ajuste_message(moneda: str, cuenta: str, anterior: float, nuevo: float, respuesta: str = "") -> str:
     simbolo = MONEDA_SIMBOLO.get(moneda, '')
     return f"""✅ Saldo actualizado
 
 👛 {cuenta} ({moneda})
 Antes: {simbolo} {anterior:,.2f}
-Ahora: {simbolo} {nuevo:,.2f}"""
+Ahora: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
 
 
 async def _save_and_confirm(data: dict, user_id: int, db: DBClient, update: Update,
@@ -305,7 +327,8 @@ async def _save_and_confirm(data: dict, user_id: int, db: DBClient, update: Upda
 
     if data['tipo'] == 'ajuste_saldo':
         cuenta_resuelta, anterior = db.set_wallet_balance(moneda, data.get('cuenta'), data['monto'], fuente=fuente)
-        await update.message.reply_text(f"{prefix}{format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'])}")
+        mensaje = format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'], data.get('respuesta'))
+        await update.message.reply_text(f"{prefix}{mensaje}")
         return
 
     cuenta_resuelta = db.append_expense(
@@ -358,6 +381,10 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
             await update.message.reply_text(
                 f"❌ {error_message}\n\n💡 Intenta reformular con monto y categoría claros."
             )
+            return
+
+        if expense_data.get('tipo') == 'charla':
+            await update.message.reply_text(expense_data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
         await _save_and_confirm(expense_data, user_id, db, update, fuente='texto')
@@ -485,6 +512,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text(
                 f"❌ No pude entender la nota de voz: {error_message}"
             )
+            return
+
+        if data.get('tipo') == 'charla':
+            await update.message.reply_text(data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
         await _save_and_confirm(data, user_id, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
