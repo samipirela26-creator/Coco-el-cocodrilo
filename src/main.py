@@ -1,0 +1,160 @@
+"""Entry point del bot de Telegram. Adaptado de telegram-bot-gastos-llm."""
+import datetime as dt
+import io
+import logging
+import signal
+import sys
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from src.config import Config
+from src.utils.logger import setup_logger
+from src.llm.gemini_client import GeminiClient
+from src.storage.db import DBClient
+from src.reports.weekly_image import render_weekly_report
+from src.bot.telegram_handler import (
+    start_command, help_command, saldo_command, saldo_inicial_command,
+    resumen_command, cambio_command, handle_message, handle_photo, handle_voice,
+    error_handler,
+)
+
+logger = None
+
+
+async def send_weekly_report(context) -> None:
+    """Job del domingo 8:00 AM: genera y envía el reporte semanal en imagen
+    a todos los usuarios permitidos (o, si no hay lista, no envía nada ya
+    que no habría a quién)."""
+    db: DBClient = context.bot_data['db']
+    allowed_user_ids = context.bot_data.get('allowed_user_ids') or []
+
+    if not allowed_user_ids:
+        logger.warning("No hay ALLOWED_USER_IDS configurado: no se puede enviar el reporte semanal.")
+        return
+
+    today = dt.datetime.now()
+    monday = today - dt.timedelta(days=today.weekday())
+    # El job corre el domingo, así que el rango es la semana que recién terminó
+    # (lunes de esta semana hasta hoy, domingo).
+    fecha_desde = monday.strftime("%Y-%m-%d")
+    fecha_hasta = today.strftime("%Y-%m-%d")
+
+    try:
+        summary = db.get_summary(fecha_desde, fecha_hasta, moneda='Bs')
+        image_bytes = render_weekly_report(summary, moneda='Bs', reference=today)
+    except Exception as e:
+        logger.exception(f"Error generando el reporte semanal: {e}")
+        return
+
+    for user_id in allowed_user_ids:
+        try:
+            await context.bot.send_photo(
+                chat_id=user_id,
+                photo=io.BytesIO(image_bytes),
+                caption="📊 Tu resumen semanal de gastos"
+            )
+        except Exception as e:
+            logger.error(f"No se pudo enviar el reporte semanal a {user_id}: {e}")
+
+
+def main():
+    global logger
+    try:
+        print("Cargando configuración...")
+        config = Config()
+
+        logger = setup_logger(config)
+        logger.info("=" * 50)
+        logger.info("Iniciando bot de Telegram de finanzas personales")
+        logger.info("=" * 50)
+
+        logger.info(f"Inicializando conector Gemini (modelo: {config.gemini_model})...")
+        llm_client = GeminiClient(api_key=config.gemini_api_key, model=config.gemini_model)
+
+        logger.info(f"Inicializando base de datos SQLite ({config.db_path})...")
+        db = DBClient(
+            db_path=config.db_path,
+            initial_balance=config.initial_balance,
+            fixed_categories=config.expense_categories,
+        )
+
+        logger.info("Configurando bot de Telegram...")
+        application = Application.builder().token(config.telegram_bot_token).build()
+
+        application.bot_data["llm_connector"] = llm_client
+        application.bot_data["db"] = db
+        application.bot_data["categories"] = config.expense_categories
+        application.bot_data["allowed_user_ids"] = config.allowed_user_ids
+
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("saldo", saldo_command))
+        application.add_handler(CommandHandler("saldo_inicial", saldo_inicial_command))
+        application.add_handler(CommandHandler("resumen", resumen_command))
+        application.add_handler(CommandHandler("cambio", cambio_command))
+        application.add_handler(CommandHandler("tasas", cambio_command))
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        )
+        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        application.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+        application.add_error_handler(error_handler)
+
+        # Reporte semanal automático: domingo 8:00 AM.
+        # Nota: en python-telegram-bot, JobQueue.run_daily usa la misma
+        # convención que datetime.date.weekday() -> 0=lunes ... 6=domingo.
+        # Por lo tanto days=(6,) corresponde a domingo.
+        if application.job_queue is not None:
+            application.job_queue.run_daily(
+                send_weekly_report,
+                time=dt.time(hour=8, minute=0),
+                days=(6,),
+                name="reporte_semanal",
+            )
+            logger.info("Job de reporte semanal (domingo 8:00 AM) programado.")
+        else:
+            logger.warning(
+                "JobQueue no disponible (¿falta instalar python-telegram-bot[job-queue]?). "
+                "El reporte semanal automático no se activará."
+            )
+
+        def signal_handler(sig, frame):
+            logger.info("Señal de terminación recibida. Deteniendo bot...")
+            db.close()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        logger.info("Bot iniciado exitosamente. Escuchando mensajes...")
+        logger.info(f"Categorías configuradas: {', '.join(config.expense_categories)}")
+        if config.allowed_user_ids:
+            logger.info(f"Acceso restringido a user_ids: {config.allowed_user_ids}")
+        else:
+            logger.warning("ALLOWED_USER_IDS no configurado: cualquiera puede usar el bot.")
+
+        application.run_polling(
+            poll_interval=2.0,
+            timeout=30,
+            drop_pending_updates=False,
+            allowed_updates=Update.ALL_TYPES,
+            bootstrap_retries=-1,
+            read_timeout=60,
+            connect_timeout=30,
+        )
+
+    except ValueError as e:
+        print(f"Error de configuración: {e}")
+        if logger:
+            logger.error(f"Error de configuración: {e}")
+        sys.exit(1)
+
+    except Exception as e:
+        print(f"Error fatal: {e}")
+        if logger:
+            logger.exception(f"Error fatal al iniciar bot: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

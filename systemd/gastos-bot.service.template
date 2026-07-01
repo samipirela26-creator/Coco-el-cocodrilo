@@ -1,0 +1,15 @@
+[Unit]
+Description=Bot de Telegram de finanzas personales
+After=network.target
+
+[Service]
+Type=simple
+User=CAMBIAR_USUARIO
+WorkingDirectory=/ruta/a/gastos-bot
+ExecStart=/ruta/a/gastos-bot/.venv/bin/python run.py
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/ruta/a/gastos-bot/.env
+
+[Install]
+WantedBy=multi-user.target
