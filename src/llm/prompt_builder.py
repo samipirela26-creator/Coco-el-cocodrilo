@@ -2,7 +2,9 @@
 
 Adaptado de telegram-bot-gastos-llm: ahora distingue entre gasto e ingreso
 para poder calcular saldo, además de monto/categoría/fecha/descripción.
-Ahora soporta también: multi-moneda (Bs/USD/COP) y categorías dinámicas.
+Soporta también: multi-moneda (Bs/USD/COP), billeteras por cuenta
+(BDV/Binance/Efectivo), categorías dinámicas y ajustes de saldo declarados
+en lenguaje natural ("tengo 50 dólares en efectivo").
 """
 from datetime import datetime
 
@@ -17,7 +19,11 @@ parecida: "{dynamic_categories_str}"."""
 
     return f"""
 Reglas:
-- "tipo" es "gasto" si el usuario pagó/compró/gastó algo, o "ingreso" si recibió/cobró/le pagaron.
+- "tipo" es "gasto" si el usuario pagó/compró/gastó algo, "ingreso" si recibió/cobró/le pagaron,
+  o "ajuste_saldo" si el usuario está DECLARANDO cuánto tiene en total en una cuenta/bolsillo
+  (no es un movimiento nuevo de dinero). Ejemplos de "ajuste_saldo": "tengo 50 dólares en efectivo",
+  "en Binance tengo 200", "me quedan 300 mil bolívares en el BDV", "en mi cuenta hay X".
+  NO uses "ajuste_saldo" si dice que gastó, compró, cobró o le pagaron: eso es "gasto" o "ingreso".
 - Si "tipo" es "gasto":
   * Si el gasto encaja claramente en una de estas categorías fijas, usa EXACTAMENTE una de ellas: "{categories_str}".
   * Si NO encaja en ninguna fija, puedes proponer una categoría NUEVA, corta y reutilizable
@@ -25,13 +31,20 @@ Reglas:
     si es "comida en la calle" usa "Comida en la calle").{dynamic_hint}
   * Antes de proponer una categoría nueva, revisa si ya existe una parecida (fija o dinámica) y reutilízala.
 - Si "tipo" es "ingreso", usa "categoria": "Ingreso".
-- "descripcion" es un breve resumen del gasto/ingreso (qué se compró, de dónde vino el ingreso, etc).
+- Si "tipo" es "ajuste_saldo", "categoria" puede dejarse vacía ("").
+- "descripcion" es un breve resumen (qué se compró, de dónde vino el ingreso, o qué cuenta se está ajustando).
 - Si no hay fecha explícita, asume hoy.
 - "monto" siempre debe ser un número positivo.
 - "moneda" debe ser una de: "Bs", "USD", "COP".
   * Si el usuario menciona dólares, "$", "dolares" o "USD" -> "USD".
   * Si el usuario menciona pesos o "COP" -> "COP".
   * Si no hay ninguna indicación de moneda, asume "Bs" (bolívares), que es el caso más común.
+- "cuenta" indica en qué bolsillo está o se mueve el dinero:
+  * Si "moneda" es "Bs", "cuenta" es siempre "BDV" (su cuenta bancaria en bolívares).
+  * Si "moneda" es "COP", "cuenta" es siempre "Efectivo".
+  * Si "moneda" es "USD", "cuenta" es "Binance" SOLO si el mensaje menciona explícitamente Binance,
+    USDT, cripto, o "vendí/compré dólares digitales". En cualquier otro caso, usa "Efectivo"
+    (los dólares en cash son el caso más común).
 """
 
 
@@ -43,7 +56,7 @@ def build_prompt(user_message: str, categories: list, dynamic_categories: list =
     referencias temporales como "ayer", "anteayer", "la semana pasada", etc.
 
     Args:
-        user_message: Mensaje del usuario sobre el gasto o ingreso
+        user_message: Mensaje del usuario sobre el gasto, ingreso o ajuste de saldo
         categories: Lista de categorías fijas válidas (para gastos)
         dynamic_categories: Lista de categorías dinámicas ya creadas previamente
 
@@ -57,10 +70,10 @@ def build_prompt(user_message: str, categories: list, dynamic_categories: list =
     system_prompt = f"""Eres un asistente contable personal.
 HOY ES {today}.
 
-Tu única función es recibir frases sobre gastos o ingresos de dinero y responder
+Tu única función es recibir frases sobre gastos, ingresos o ajustes de saldo y responder
 EXCLUSIVAMENTE con un objeto JSON.
 
-Formato: {{"tipo": <"gasto" o "ingreso">, "monto": <float, siempre positivo>, "categoria": <string>, "moneda": <"Bs", "USD" o "COP">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
+Formato: {{"tipo": <"gasto", "ingreso" o "ajuste_saldo">, "monto": <float, siempre positivo>, "categoria": <string, vacío si es ajuste_saldo>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
 
@@ -87,13 +100,17 @@ Existen dos tipos de captura posibles:
 2. "saldo": una pantalla que muestra el saldo/balance total de una cuenta (no un movimiento).
 
 Responde EXCLUSIVAMENTE con un objeto JSON con este formato:
-{{"captura_tipo": <"transferencia" o "saldo">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "monto": <float, siempre positivo>, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
+{{"captura_tipo": <"transferencia" o "saldo">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "monto": <float, siempre positivo>, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 Reglas adicionales:
 - Si es una confirmación de transferencia donde el usuario ENVÍA dinero (paga algo, transfiere a otra persona/comercio), "tipo" es "gasto".
 - Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".
 - Si es una pantalla de saldo de cuenta (no un movimiento), usa "captura_tipo": "saldo" y en "monto" pon el saldo mostrado.
   En este caso "tipo", "categoria" y "descripcion" pueden omitirse o dejarse vacíos.
+- Para identificar la cuenta de una captura de "saldo":
+  * Si es una app bancaria en bolívares (BDV, Banesco, Mercantil, Provincial, etc.), usa "moneda": "Bs" y "cuenta": "BDV".
+  * Si es Binance (o similar) mostrando saldo de USDT/dólares digitales, usa "moneda": "USD" y "cuenta": "Binance".
+  * Si es cualquier otra app/billetera en dólares que no sea Binance, usa "cuenta": "Efectivo".
 - Si no hay fecha visible, asume hoy.
 
 IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
@@ -113,11 +130,11 @@ def build_audio_prompt(categories: list, dynamic_categories: list = None) -> str
     dynamic_categories_str = '", "'.join(dynamic_categories) if dynamic_categories else ""
 
     system_prompt = f"""Eres un asistente contable personal. Vas a recibir una nota de voz en español
-donde el usuario describe un gasto o ingreso de dinero. Escucha el audio, entiende lo que dice,
+donde el usuario describe un gasto, ingreso o ajuste de saldo. Escucha el audio, entiende lo que dice,
 y responde EXCLUSIVAMENTE con un objeto JSON.
 HOY ES {today}.
 
-Formato: {{"tipo": <"gasto" o "ingreso">, "monto": <float, siempre positivo>, "categoria": <string>, "moneda": <"Bs", "USD" o "COP">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
+Formato: {{"tipo": <"gasto", "ingreso" o "ajuste_saldo">, "monto": <float, siempre positivo>, "categoria": <string, vacío si es ajuste_saldo>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
 

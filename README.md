@@ -2,9 +2,10 @@
 
 Bot que registra tus gastos e ingresos escribiéndole en lenguaje natural
 ("Compré pan por 500", "Cobré el sueldo, 50000"), enviándole una foto
-(captura de una transferencia o de tu saldo bancario), o una nota de voz.
-Calcula tu saldo (en Bs, USD y COP) y te muestra qué porcentaje de tu gasto
-va a cada categoría, además de un reporte semanal en imagen todos los
+(captura de una transferencia o de tu saldo en el BDV/Binance), o una nota
+de voz. Trackea tu plata en 4 billeteras independientes (BDV en Bs, Binance
+en USD, Efectivo en USD y Efectivo en COP), te muestra qué porcentaje de tu
+gasto va a cada categoría, además de un reporte semanal en imagen todos los
 domingos a las 8:00 AM.
 
 Construido reutilizando partes ya probadas del proyecto open source
@@ -41,25 +42,46 @@ python run.py
 
 Comandos del bot:
 - `/start`, `/help`
-- Mensaje libre → registra gasto o ingreso (ej: "gasté 1200 en supermercado",
-  "gasté 20 dólares", "pagué 3000 pesos"). Si no especificás moneda, se asume Bs.
+- Mensaje libre → registra gasto, ingreso o **ajuste de saldo** (ej: "gasté 1200
+  en supermercado", "gasté 20 dólares", "pagué 3000 pesos", o "tengo 50
+  dólares en efectivo" / "en Binance tengo 200" para declarar cuánto tienes
+  sin que sea un movimiento nuevo). Si no especificás moneda, se asume Bs.
 - Foto de una captura de pantalla → ver sección "Fotos y capturas de pantalla".
-- Nota de voz → se transcribe y registra igual que un mensaje de texto.
-- `/saldo` → saldo actual en Bs, USD y COP, con el equivalente en USD de tus
-  Bs a tasa BCV y Binance.
-- `/saldo_inicial <monto> [moneda]` → fija el saldo de partida por moneda
-  (moneda opcional, default Bs). Ej: `/saldo_inicial 100000` o
-  `/saldo_inicial 200 USD`.
+- Nota de voz → se transcribe y registra igual que un mensaje de texto (gasto,
+  ingreso o ajuste de saldo).
+- `/saldo` → tus 4 billeteras (BDV, Binance, Efectivo USD, Efectivo COP), con
+  el equivalente en USD de tu saldo BDV a tasa BCV y Binance.
+- `/saldo_inicial <monto> [moneda] [cuenta]` → fija el saldo de una billetera
+  puntual. `cuenta` es obligatoria si `moneda` es USD (Binance o Efectivo).
+  Ej: `/saldo_inicial 100000` (Bs, BDV), `/saldo_inicial 200 USD Binance`,
+  `/saldo_inicial 50 USD Efectivo`.
 - `/resumen` o `/resumen 2026-06` → gasto total y % por categoría del mes,
   desglosado por moneda.
 - `/cambio` (alias `/tasas`) → tasa BCV, tasa Binance/paralelo y USD→COP.
 
-### Multi-moneda
+### Multi-moneda y billeteras
 
 El bot registra transacciones en tres monedas: `Bs` (bolívares, default),
-`USD` (efectivo) y `COP` (pesos colombianos, tasa fija 1 USD = 3600 COP).
-Gemini infiere la moneda del mensaje (ej. "20 dólares" → USD, "3000 pesos" → COP);
-si no hay ninguna pista, asume Bs.
+`USD` y `COP` (pesos colombianos, tasa fija 1 USD = 3600 COP). Gemini infiere
+la moneda del mensaje (ej. "20 dólares" → USD, "3000 pesos" → COP); si no hay
+ninguna pista, asume Bs.
+
+Dentro de eso, el saldo se trackea por **billetera** (`src/storage/db.py`,
+tabla `wallets`), no solo por moneda, porque en la práctica son bolsillos que
+no se mezclan:
+
+| Moneda | Cuenta     | Qué es                          |
+|--------|-----------|----------------------------------|
+| Bs     | BDV       | Cuenta bancaria en el Banco de Venezuela |
+| USD    | Binance   | USDT / dólares digitales         |
+| USD    | Efectivo  | Dólares en cash                  |
+| COP    | Efectivo  | Pesos colombianos en cash        |
+
+Cada billetera es un contador independiente: los gastos/ingresos la
+incrementan o decrementan, y una foto de saldo o una frase como "tengo 50
+dólares en efectivo" la puede **sobrescribir directo** (ver siguiente
+sección). Para USD, si el mensaje no menciona Binance/USDT/cripto
+explícitamente, Gemini asume `Efectivo` (el caso más común del día a día).
 
 ### Tasas de cambio (BCV y Binance)
 
@@ -87,23 +109,23 @@ El bot analiza la imagen con Gemini Vision y distingue dos casos
 
 - **Transferencia** (confirmación de pago/transferencia): se registra
   automáticamente como gasto o ingreso, igual que un mensaje de texto.
-- **Saldo bancario** (pantalla que muestra el balance total de la cuenta):
-  **no se registra ninguna transacción**. En su lugar, el bot compara el
-  saldo que muestra el banco contra el saldo que tiene calculado
-  internamente, te responde con ambos valores y la diferencia, y guarda un
-  "snapshot" informativo en la tabla `balance_snapshots` (solo para
-  referencia/auditoría, no afecta el cálculo de saldo). Si querés que el
-  bot adopte el saldo del banco como verdad, usá el comando sugerido en la
-  respuesta: `/saldo_inicial <monto_banco> <moneda>`.
-  Se eligió este enfoque (mostrar la diferencia en vez de auto-corregir)
-  para evitar que una foto mal interpretada altere silenciosamente tu
-  historial de saldo.
+- **Saldo** (pantalla que muestra el balance total de una cuenta, sea BDV o
+  Binance): el bot **adopta ese número directo** como el nuevo saldo de la
+  billetera correspondiente (`db.set_wallet_balance`), sin pedir
+  confirmación — así registrar no tiene fricción. Para que notes al toque si
+  el OCR/LLM leyó mal un número, la respuesta siempre muestra el saldo
+  anterior y el nuevo, y además queda guardado un registro en la tabla
+  `balance_snapshots` por si hace falta auditar o corregir a mano. Gemini
+  decide sola qué billetera es según la app de la captura: BDV/Banesco/
+  Mercantil/etc. → Bs/BDV, Binance → USD/Binance, cualquier otra app en
+  dólares → USD/Efectivo.
 
 ### Notas de voz
 
 Se transcriben y parsean en una sola llamada a Gemini (el audio `.ogg` de
 Telegram se envía directo al modelo, sin transcripción intermedia por
-separado) — es más simple y evita un paso extra que podría fallar.
+separado) — es más simple y evita un paso extra que podría fallar. Puede
+resultar en un gasto/ingreso o en un ajuste de saldo, igual que el texto.
 
 ### Reporte semanal (domingo 8:00 AM)
 

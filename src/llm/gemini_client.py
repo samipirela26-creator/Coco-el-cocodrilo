@@ -15,13 +15,13 @@ logger = logging.getLogger('gastos-bot')
 class GeminiClient(LLMConnector):
     """Cliente para generar respuestas usando Gemini."""
 
-    def __init__(self, api_key: str, model: str = 'gemini-2.0-flash'):
+    def __init__(self, api_key: str, model: str = 'gemini-3.5-flash'):
         """
         Inicializa el cliente de Gemini.
 
         Args:
             api_key: API key de Google Gemini
-            model: Nombre del modelo (ej: "gemini-2.0-flash")
+            model: Nombre del modelo (ej: "gemini-3.5-flash")
         """
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model)

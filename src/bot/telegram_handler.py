@@ -1,7 +1,9 @@
 """Handlers del bot de Telegram.
 Adaptado de telegram-bot-gastos-llm: agrega /saldo, /resumen y /saldo_inicial;
-además soporta multi-moneda (Bs/USD/COP), tasas BCV/Binance, categorías
-dinámicas, capturas de pantalla (transferencia/saldo) y notas de voz.
+además soporta multi-moneda (Bs/USD/COP), billeteras por cuenta
+(BDV/Binance/Efectivo), tasas BCV/Binance, categorías dinámicas, capturas de
+pantalla (transferencia/saldo, con adopción directa del saldo leído) y notas
+de voz.
 """
 import logging
 from telegram import Update
@@ -20,6 +22,7 @@ from src.utils.exceptions import (
 logger = logging.getLogger('gastos-bot')
 
 MONEDA_SIMBOLO = {"Bs": "Bs", "USD": "$", "COP": "$"}
+CUENTA_EMOJI = {"BDV": "🏦", "Binance": "💻", "Efectivo": "💵"}
 
 
 def _is_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -34,24 +37,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     welcome_message = """¡Hola! 👋
 
-Soy tu bot de finanzas personales. Envíame tus gastos o ingresos en lenguaje natural
-(texto, foto de una captura, o nota de voz) y los voy a registrar.
+Soy tu bot de finanzas personales. Envíame tus gastos, ingresos o saldos en
+lenguaje natural (texto, foto de una captura, o nota de voz) y los voy a
+registrar.
 
-📝 Ejemplos:
+📝 Ejemplos de gasto/ingreso:
 • "Compré pan por 500" (Bs por defecto)
 • "Gasté 20 dólares en el super"
 • "Pagué 3000 pesos por un almuerzo"
 • "Me pagaron el sueldo, 50000"
 
+💰 Ejemplos para declarar cuánto tienes (sin que sea un gasto/ingreso nuevo):
+• "Tengo 50 dólares en efectivo"
+• "En Binance tengo 200"
+• "Me quedan 300 mil bolívares en el BDV"
+
 También puedes enviarme:
 📸 Una captura de una transferencia -> la registro como gasto/ingreso
-📸 Una captura de tu saldo bancario -> comparo con lo que tengo registrado
-🎤 Una nota de voz describiendo el gasto
+📸 Una captura de tu saldo (BDV o Binance) -> actualizo esa billetera directo
+🎤 Una nota de voz describiendo el gasto o el saldo
 
 Comandos:
-/saldo - ver tu saldo actual (Bs, USD, COP)
+/saldo - ver tus 4 billeteras (BDV, Binance, Efectivo USD, Efectivo COP)
 /resumen - ver gastos del mes por categoría (con porcentajes)
-/saldo_inicial <monto> [moneda] - configurar tu saldo de partida
+/saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
 /help - ver categorías y ayuda"""
     await update.message.reply_text(welcome_message)
@@ -70,17 +79,24 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 (También puedo crear categorías nuevas automáticamente si el gasto no encaja en ninguna,
 ej: "Gasto de Gio", "Comida en la calle".)
 
+👛 Billeteras que manejo (independientes entre sí):
+• BDV (Bs) — tu cuenta bancaria en bolívares
+• Binance (USD) — tus dólares digitales/USDT
+• Efectivo (USD) — dólares en cash
+• Efectivo (COP) — pesos en cash
+
 📝 Cómo usar:
-Envía un mensaje, foto o nota de voz describiendo el gasto o ingreso, por ejemplo:
-• "Compré X por Y"
-• "Gasté Z en [categoría]"
-• "Cobré Z de [fuente]"
+Envía un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
+• "Compré X por Y" / "Gasté Z en [categoría]" / "Cobré Z de [fuente]"
+• "Tengo Z dólares en efectivo" / "En Binance tengo Z" -> actualiza esa billetera directo
 Si no mencionas moneda, asumo Bs. Puedes decir "20 dólares" o "3000 pesos" para USD/COP.
+En USD, si no mencionas Binance/USDT/cripto, asumo que es Efectivo.
 
 Comandos:
-/saldo - saldo actual en Bs, USD y COP (con conversión BCV/Binance)
+/saldo - tus 4 billeteras, con conversión BCV/Binance de tus Bs
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
-/saldo_inicial <monto> [moneda] - fija tu saldo de partida (moneda opcional, default Bs)
+/saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
+  (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
 /cambio - tasas BCV, Binance y USD->COP"""
     await update.message.reply_text(help_message)
 
@@ -107,19 +123,30 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     db: DBClient = context.bot_data['db']
     try:
-        balances = db.get_balances()
+        wallets = {(w['moneda'], w['cuenta']): w['balance'] for w in db.get_all_wallets()}
         bcv = fx.get_bcv_rate(db)
         binance = fx.get_binance_rate(db)
 
+        bs_bdv = wallets.get(('Bs', 'BDV'), 0.0)
+        usd_binance = wallets.get(('USD', 'Binance'), 0.0)
+        usd_efectivo = wallets.get(('USD', 'Efectivo'), 0.0)
+        cop_efectivo = wallets.get(('COP', 'Efectivo'), 0.0)
+
         lines = ["💰 Tu saldo actual:\n"]
-        lines.append(f"Bs {balances['Bs']:,.2f}")
-        lines.append(f"$ {balances['USD']:,.2f} (USD efectivo)")
-        lines.append(f"$ {balances['COP']:,.2f} COP")
-        lines.append("")
+        lines.append(f"{CUENTA_EMOJI['BDV']} BDV (Bs): {bs_bdv:,.2f}")
         if bcv:
-            lines.append(f"↳ Tus Bs equivalen a ~${balances['Bs'] / bcv:,.2f} a tasa BCV")
+            lines.append(f"   ↳ ≈ $ {bs_bdv / bcv:,.2f} a tasa BCV")
         if binance:
-            lines.append(f"↳ Tus Bs equivalen a ~${balances['Bs'] / binance:,.2f} a tasa Binance")
+            lines.append(f"   ↳ ≈ $ {bs_bdv / binance:,.2f} a tasa Binance")
+        lines.append(f"{CUENTA_EMOJI['Binance']} Binance (USD): $ {usd_binance:,.2f}")
+        lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo (USD): $ {usd_efectivo:,.2f}")
+        lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo (COP): $ {cop_efectivo:,.2f}")
+
+        if binance:
+            total_usd = (bs_bdv / binance) + usd_binance + usd_efectivo
+            lines.append("")
+            lines.append(f"🌎 Total aprox. en USD (BDV a tasa Binance + Binance + Efectivo USD): $ {total_usd:,.2f}")
+
         lines.append("")
         lines.append(_format_rates_block(bcv, binance))
 
@@ -135,9 +162,11 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
     args = context.args
     if not args:
         await update.message.reply_text(
-            "Uso: /saldo_inicial <monto> [moneda]\n"
-            "Ej: /saldo_inicial 100000 (Bs por defecto)\n"
-            "Ej: /saldo_inicial 200 USD"
+            "Uso: /saldo_inicial <monto> [moneda] [cuenta]\n"
+            "Ej: /saldo_inicial 100000 (Bs, cuenta BDV)\n"
+            "Ej: /saldo_inicial 200 USD Binance\n"
+            "Ej: /saldo_inicial 50 USD Efectivo\n"
+            "Ej: /saldo_inicial 300000 COP"
         )
         return
     try:
@@ -155,11 +184,32 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("❌ Moneda inválida. Usa Bs, USD o COP.")
             return
 
-    db.set_initial_balance(monto, moneda=moneda)
-    nuevo_saldo = db.get_balance(moneda)
+    cuenta = None
+    if len(args) > 2:
+        cuenta_arg = args[2].strip()
+        cuenta_map = {"bdv": "BDV", "binance": "Binance", "efectivo": "Efectivo"}
+        cuenta = cuenta_map.get(cuenta_arg.lower())
+        if not cuenta:
+            await update.message.reply_text("❌ Cuenta inválida. Usa BDV, Binance o Efectivo.")
+            return
+    elif moneda == 'USD':
+        await update.message.reply_text(
+            "❌ Para USD tienes que indicar la cuenta:\n"
+            "/saldo_inicial <monto> USD Binance\n"
+            "/saldo_inicial <monto> USD Efectivo"
+        )
+        return
+
+    try:
+        cuenta_resuelta, anterior = db.set_wallet_balance(moneda, cuenta, monto, fuente='comando')
+    except StorageError as e:
+        await update.message.reply_text(f"❌ Error al actualizar el saldo: {e}")
+        return
+
     await update.message.reply_text(
-        f"✅ Saldo inicial ({moneda}) configurado en {monto:,.2f}\n"
-        f"💰 Saldo actual ({moneda}): {nuevo_saldo:,.2f}"
+        f"✅ Saldo de {cuenta_resuelta} ({moneda}) actualizado\n"
+        f"Antes: {anterior:,.2f}\n"
+        f"Ahora: {monto:,.2f}"
     )
 
 
@@ -218,6 +268,62 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ---------------------------------------------------------------------- #
+# Guardado compartido (texto, voz, y fotos de transferencia)
+# ---------------------------------------------------------------------- #
+
+def format_confirmation_message(expense_data: dict, balance: float, cuenta: str) -> str:
+    emoji = "💸" if expense_data['tipo'] == 'gasto' else "💵"
+    tipo_str = "Gasto" if expense_data['tipo'] == 'gasto' else "Ingreso"
+    moneda = expense_data.get('moneda', 'Bs')
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    return f"""✅ {tipo_str} registrado
+
+{emoji} Monto: {simbolo} {expense_data['monto']:.2f} {moneda}
+📂 Categoría: {expense_data['categoria']}
+👛 Cuenta: {cuenta}
+📅 Fecha: {expense_data['fecha']}
+📝 {expense_data['descripcion']}
+
+💰 Saldo en {cuenta} ({moneda}): {balance:,.2f}"""
+
+
+def format_ajuste_message(moneda: str, cuenta: str, anterior: float, nuevo: float) -> str:
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    return f"""✅ Saldo actualizado
+
+👛 {cuenta} ({moneda})
+Antes: {simbolo} {anterior:,.2f}
+Ahora: {simbolo} {nuevo:,.2f}"""
+
+
+async def _save_and_confirm(data: dict, user_id: int, db: DBClient, update: Update,
+                             prefix: str = "", fuente: str = 'texto') -> None:
+    """Guarda una transacción (gasto/ingreso) o un ajuste de saldo ya parseado
+    y validado, y responde con la confirmación correspondiente. Compartido
+    por texto, voz y fotos de transferencia."""
+    moneda = data.get('moneda', 'Bs')
+
+    if data['tipo'] == 'ajuste_saldo':
+        cuenta_resuelta, anterior = db.set_wallet_balance(moneda, data.get('cuenta'), data['monto'], fuente=fuente)
+        await update.message.reply_text(f"{prefix}{format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'])}")
+        return
+
+    cuenta_resuelta = db.append_expense(
+        tipo=data['tipo'],
+        fecha=data['fecha'],
+        descripcion=data['descripcion'],
+        categoria=data['categoria'],
+        monto=data['monto'],
+        user_id=user_id,
+        moneda=moneda,
+        cuenta=data.get('cuenta'),
+    )
+    balance = db.get_wallet_balance(moneda, cuenta_resuelta)
+    confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta)
+    await update.message.reply_text(f"{prefix}{confirmation_message}")
+
+
+# ---------------------------------------------------------------------- #
 # Mensajes de texto
 # ---------------------------------------------------------------------- #
 
@@ -232,7 +338,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def handle_text_message(user_message: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar en SQLite 5) confirmar.
+    Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar/ajustar saldo 5) confirmar.
     """
     user_id = update.effective_user.id
     llm_connector: LLMConnector = context.bot_data['llm_connector']
@@ -254,19 +360,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
             )
             return
 
-        moneda = expense_data.get('moneda', 'Bs')
-        db.append_expense(
-            tipo=expense_data['tipo'],
-            fecha=expense_data['fecha'],
-            descripcion=expense_data['descripcion'],
-            categoria=expense_data['categoria'],
-            monto=expense_data['monto'],
-            user_id=user_id,
-            moneda=moneda,
-        )
-
-        confirmation_message = format_confirmation_message(expense_data, db.get_balance(moneda))
-        await update.message.reply_text(confirmation_message)
+        await _save_and_confirm(expense_data, user_id, db, update, fuente='texto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
@@ -275,7 +369,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     except (GeminiInvalidJSONError,):
         await update.message.reply_text(
             "❌ No pude entender tu mensaje.\n\n💡 Intenta ser más específico:\n"
-            "• 'Compré [cosa] por $[monto]'\n• 'Gasté [monto] en [categoría]'"
+            "• 'Compré [cosa] por $[monto]'\n• 'Gasté [monto] en [categoría]'\n• 'Tengo [monto] en efectivo'"
         )
         logger.error("JSON inválido desde Gemini")
 
@@ -288,21 +382,6 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
         logger.exception(f"Error inesperado: {e}")
 
 
-def format_confirmation_message(expense_data: dict, balance: float) -> str:
-    emoji = "💸" if expense_data['tipo'] == 'gasto' else "💵"
-    tipo_str = "Gasto" if expense_data['tipo'] == 'gasto' else "Ingreso"
-    moneda = expense_data.get('moneda', 'Bs')
-    simbolo = MONEDA_SIMBOLO.get(moneda, '')
-    return f"""✅ {tipo_str} registrado
-
-{emoji} Monto: {simbolo} {expense_data['monto']:.2f} {moneda}
-📂 Categoría: {expense_data['categoria']}
-📅 Fecha: {expense_data['fecha']}
-📝 {expense_data['descripcion']}
-
-💰 Saldo actual ({moneda}): {balance:,.2f}"""
-
-
 # ---------------------------------------------------------------------- #
 # Fotos / capturas de pantalla
 # ---------------------------------------------------------------------- #
@@ -312,9 +391,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     Descarga la foto de mayor resolución, la analiza con Gemini Vision y
     decide el flujo según 'captura_tipo':
       - "transferencia": registra un gasto/ingreso.
-      - "saldo": no registra transacción; compara el saldo del banco vs el
-        saldo que tiene el bot y guarda un snapshot informativo (ver README,
-        sección "Captura de saldo bancario").
+      - "saldo": ADOPTA directo el saldo leído como la billetera correspondiente
+        (BDV si es Bs, Binance/Efectivo si es USD según la app detectada) --
+        sin pedir confirmación, pero mostrando antes/después para que el
+        usuario note al toque si el OCR leyó mal algo (ver db.set_wallet_balance).
     """
     if not _is_allowed(update, context):
         return
@@ -340,17 +420,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         if captura_tipo == 'saldo':
             monto_banco = float(data.get('monto', 0))
-            monto_bot = db.get_balance(moneda)
-            db.save_balance_snapshot(moneda, monto_banco, monto_bot)
-            diferencia = monto_banco - monto_bot
+            cuenta_resuelta, anterior = db.set_wallet_balance(moneda, data.get('cuenta'), monto_banco, fuente='foto')
             await update.message.reply_text(
-                f"🏦 Detecté una captura de saldo bancario ({moneda}).\n\n"
-                f"Tu banco dice: {monto_banco:,.2f}\n"
-                f"El bot tiene registrado: {monto_bot:,.2f}\n"
-                f"Diferencia: {diferencia:,.2f}\n\n"
-                f"No registré ningún movimiento (esto es solo informativo).\n"
-                f"Si quieres que el bot use el saldo del banco como referencia, usa:\n"
-                f"/saldo_inicial {monto_banco:.2f} {moneda}"
+                f"📸 Detecté una captura de saldo.\n\n"
+                f"{format_ajuste_message(moneda, cuenta_resuelta, anterior, monto_banco)}"
             )
             return
 
@@ -362,17 +435,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        db.append_expense(
-            tipo=data['tipo'],
-            fecha=data['fecha'],
-            descripcion=data['descripcion'],
-            categoria=data['categoria'],
-            monto=data['monto'],
-            user_id=user_id,
-            moneda=moneda,
-        )
-        confirmation_message = format_confirmation_message(data, db.get_balance(moneda))
-        await update.message.reply_text(f"📸 Captura de transferencia detectada.\n\n{confirmation_message}")
+        await _save_and_confirm(data, user_id, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
@@ -395,7 +458,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Descarga la nota de voz (.ogg/opus), la transcribe y parsea en un solo
-    paso vía Gemini, y registra la transacción igual que el flujo de texto.
+    paso vía Gemini, y guarda igual que el flujo de texto (gasto/ingreso o
+    ajuste de saldo).
     """
     if not _is_allowed(update, context):
         return
@@ -423,18 +487,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        moneda = data.get('moneda', 'Bs')
-        db.append_expense(
-            tipo=data['tipo'],
-            fecha=data['fecha'],
-            descripcion=data['descripcion'],
-            categoria=data['categoria'],
-            monto=data['monto'],
-            user_id=user_id,
-            moneda=moneda,
-        )
-        confirmation_message = format_confirmation_message(data, db.get_balance(moneda))
-        await update.message.reply_text(f"🎤 Nota de voz procesada.\n\n{confirmation_message}")
+        await _save_and_confirm(data, user_id, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")

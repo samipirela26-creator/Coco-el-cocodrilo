@@ -1,8 +1,19 @@
 """Cliente SQLite para gastos/ingresos. Reemplaza al SheetsClient de
 telegram-bot-gastos-llm manteniendo una interfaz similar (append_expense),
-y agrega get_balance / get_summary para saldo y porcentajes por categoría.
+y agrega get_summary para porcentajes por categoría.
 
 Soporta multi-moneda (Bs, USD, COP) y categorías dinámicas creadas por el LLM.
+
+El saldo se trackea por "billetera" (moneda + cuenta), no solo por moneda,
+porque el usuario maneja el dinero en bolsillos distintos que no se mezclan:
+- Bs   -> BDV        (cuenta bancaria en bolívares)
+- USD  -> Binance    (USDT / dólares digitales)
+- USD  -> Efectivo   (dólares en cash)
+- COP  -> Efectivo   (pesos colombianos en cash)
+Cada billetera es un contador independiente (no se deriva de la suma de
+transacciones): las transacciones lo incrementan/decrementan, y una foto de
+saldo o una frase tipo "tengo 50 dólares en efectivo" lo puede sobrescribir
+directo (ver `set_wallet_balance`).
 """
 import logging
 import sqlite3
@@ -13,9 +24,32 @@ logger = logging.getLogger('gastos-bot')
 
 MONEDAS_VALIDAS = ('Bs', 'USD', 'COP')
 
+# Billeteras conocidas: (moneda, cuenta). Bs y COP solo tienen una cuenta
+# posible; USD tiene dos (Binance y Efectivo) porque son bolsillos distintos.
+WALLETS = (
+    ('Bs', 'BDV'),
+    ('USD', 'Binance'),
+    ('USD', 'Efectivo'),
+    ('COP', 'Efectivo'),
+)
+CUENTAS_POR_MONEDA = {'Bs': ('BDV',), 'USD': ('Binance', 'Efectivo'), 'COP': ('Efectivo',)}
+DEFAULT_CUENTA = {'Bs': 'BDV', 'USD': 'Efectivo', 'COP': 'Efectivo'}
+
+
+def resolve_cuenta(moneda: str, cuenta: str = None) -> str:
+    """Devuelve una cuenta válida para la moneda dada. Bs y COP tienen una
+    sola cuenta posible, así que se ignora lo que venga. USD tiene dos
+    (Binance/Efectivo); si no viene o no es válida, asume Efectivo (el caso
+    más común en el día a día: solo se asume Binance si el mensaje lo
+    menciona explícitamente, ver prompt_builder.py)."""
+    validas = CUENTAS_POR_MONEDA.get(moneda, ('Efectivo',))
+    if cuenta in validas:
+        return cuenta
+    return DEFAULT_CUENTA.get(moneda, 'Efectivo')
+
 
 class DBClient:
-    """Cliente para leer/escribir transacciones en SQLite."""
+    """Cliente para leer/escribir transacciones y billeteras en SQLite."""
 
     def __init__(self, db_path: str, initial_balance: float = 0.0,
                  fixed_categories: list = None):
@@ -23,12 +57,12 @@ class DBClient:
         try:
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._init_schema(initial_balance, fixed_categories or [])
+            self._init_schema(fixed_categories or [], initial_balance)
             logger.info(f"Base de datos SQLite lista en: {db_path}")
         except sqlite3.Error as e:
             raise StorageError(f"No se pudo inicializar la base de datos: {e}")
 
-    def _init_schema(self, initial_balance: float, fixed_categories: list) -> None:
+    def _init_schema(self, fixed_categories: list, initial_balance: float = 0.0) -> None:
         cur = self._conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
@@ -40,36 +74,38 @@ class DBClient:
                 descripcion TEXT,
                 user_id INTEGER,
                 created_at TEXT NOT NULL,
-                moneda TEXT NOT NULL DEFAULT 'Bs'
+                moneda TEXT NOT NULL DEFAULT 'Bs',
+                cuenta TEXT NOT NULL DEFAULT 'BDV'
             )
         """)
-        # Migración segura: si la tabla ya existía sin la columna 'moneda', agregarla.
-        try:
-            cur.execute("ALTER TABLE transactions ADD COLUMN moneda TEXT NOT NULL DEFAULT 'Bs'")
-            self._conn.commit()
-        except sqlite3.OperationalError:
-            # La columna ya existe (o la tabla se acaba de crear con ella).
-            pass
+        # Migraciones seguras para bases de datos creadas con un esquema previo.
+        for statement in (
+            "ALTER TABLE transactions ADD COLUMN moneda TEXT NOT NULL DEFAULT 'Bs'",
+            "ALTER TABLE transactions ADD COLUMN cuenta TEXT NOT NULL DEFAULT 'BDV'",
+        ):
+            try:
+                cur.execute(statement)
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # la columna ya existe
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS wallets (
+                moneda TEXT NOT NULL,
+                cuenta TEXT NOT NULL,
+                balance REAL NOT NULL DEFAULT 0,
+                updated_at TEXT,
+                PRIMARY KEY (moneda, cuenta)
             )
         """)
-        cur.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('initial_balance', ?)",
-            (str(initial_balance),)
-        )
-        # Saldos iniciales por moneda: initial_balance_Bs / initial_balance_USD / initial_balance_COP
-        cur.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('initial_balance_Bs', ?)",
-            (str(initial_balance),)
-        )
-        for moneda in ('USD', 'COP'):
+        for moneda, cuenta in WALLETS:
+            # INITIAL_BALANCE (config) solo se aplica a Bs/BDV, la billetera
+            # "principal"; las demás arrancan en 0 y se llenan con capturas,
+            # texto/voz o transacciones.
+            saldo_inicial = initial_balance if (moneda, cuenta) == ('Bs', 'BDV') else 0.0
             cur.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                (f'initial_balance_{moneda}', '0')
+                "INSERT OR IGNORE INTO wallets (moneda, cuenta, balance, updated_at) VALUES (?, ?, ?, ?)",
+                (moneda, cuenta, saldo_inicial, datetime.now().isoformat())
             )
 
         cur.execute("""
@@ -97,13 +133,17 @@ class DBClient:
             )
         """)
 
-        # Snapshot de saldo bancario reportado por captura de pantalla (punto 4b).
+        # Historial de cambios de saldo por billetera (fotos, comandos, texto/voz
+        # tipo "tengo X en efectivo"), para poder auditar o corregir a mano si un
+        # OCR/LLM lee mal un número.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS balance_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 moneda TEXT NOT NULL,
-                monto_banco REAL NOT NULL,
-                monto_bot REAL NOT NULL,
+                cuenta TEXT NOT NULL,
+                monto_anterior REAL NOT NULL,
+                monto_nuevo REAL NOT NULL,
+                fuente TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
@@ -116,22 +156,31 @@ class DBClient:
 
     def append_expense(self, tipo: str, fecha: str, descripcion: str,
                         categoria: str, monto: float, user_id: int = None,
-                        moneda: str = 'Bs') -> None:
-        """Inserta una transacción (gasto o ingreso). Si la categoría no existe
-        aún en la tabla `categories`, la crea como no-fija (dinámica)."""
+                        moneda: str = 'Bs', cuenta: str = None) -> str:
+        """Inserta una transacción (gasto o ingreso) y ajusta la billetera
+        correspondiente. Si la categoría no existe aún, la crea como no-fija
+        (dinámica). Retorna la cuenta resuelta (útil para el mensaje de
+        confirmación, ya que en USD puede no ser la que el usuario escribió)."""
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
+        cuenta = resolve_cuenta(moneda, cuenta)
         try:
             self._conn.execute(
                 """INSERT INTO transactions
-                   (tipo, monto, categoria, fecha, descripcion, user_id, created_at, moneda)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (tipo, monto, categoria, fecha, descripcion, user_id, created_at, moneda, cuenta)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (tipo, monto, categoria, fecha, descripcion, user_id,
-                 datetime.now().isoformat(), moneda)
+                 datetime.now().isoformat(), moneda, cuenta)
             )
             self._ensure_category(categoria)
+            delta = monto if tipo == 'ingreso' else -monto
+            self._conn.execute(
+                "UPDATE wallets SET balance = balance + ?, updated_at = ? WHERE moneda = ? AND cuenta = ?",
+                (delta, datetime.now().isoformat(), moneda, cuenta)
+            )
             self._conn.commit()
-            logger.info(f"Transacción registrada: {tipo} {moneda} {monto} - {categoria} - {fecha}")
+            logger.info(f"Transacción registrada: {tipo} {moneda}/{cuenta} {monto} - {categoria} - {fecha}")
+            return cuenta
         except sqlite3.Error as e:
             raise StorageError(f"Error al guardar transacción: {e}")
 
@@ -158,52 +207,54 @@ class DBClient:
         return [r[0] for r in rows]
 
     # ------------------------------------------------------------------ #
-    # Saldo inicial / balances
+    # Billeteras (saldo por moneda + cuenta)
     # ------------------------------------------------------------------ #
 
-    def get_initial_balance(self, moneda: str = 'Bs') -> float:
+    def get_wallet_balance(self, moneda: str, cuenta: str = None) -> float:
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
+        cuenta = resolve_cuenta(moneda, cuenta)
         row = self._conn.execute(
-            "SELECT value FROM settings WHERE key = ?",
-            (f'initial_balance_{moneda}',)
+            "SELECT balance FROM wallets WHERE moneda = ? AND cuenta = ?", (moneda, cuenta)
         ).fetchone()
         return float(row[0]) if row else 0.0
 
-    def set_initial_balance(self, value: float, moneda: str = 'Bs') -> None:
+    def get_all_wallets(self) -> list:
+        """Retorna las 4 billeteras: [{"moneda": str, "cuenta": str, "balance": float}, ...]."""
+        rows = self._conn.execute(
+            "SELECT moneda, cuenta, balance FROM wallets ORDER BY moneda, cuenta"
+        ).fetchall()
+        return [{"moneda": m, "cuenta": c, "balance": b} for m, c, b in rows]
+
+    def set_wallet_balance(self, moneda: str, cuenta: str, monto: float,
+                            fuente: str = 'comando') -> tuple:
+        """Sobrescribe directo el saldo de una billetera (ej: al leer una
+        captura de saldo, o cuando el usuario dice "tengo X en efectivo").
+        No pide confirmación -- por diseño, para que registrar sea sin
+        fricción -- pero deja registro en `balance_snapshots` (antes/después)
+        para poder auditar o corregir a mano si algo se leyó mal.
+
+        Retorna (cuenta_resuelta, saldo_anterior)."""
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
-        self._conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (f'initial_balance_{moneda}', str(value))
-        )
-        # Mantiene compatibilidad con la clave legacy 'initial_balance' para Bs.
-        if moneda == 'Bs':
+        cuenta = resolve_cuenta(moneda, cuenta)
+        try:
+            anterior = self.get_wallet_balance(moneda, cuenta)
             self._conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('initial_balance', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(value),)
+                "UPDATE wallets SET balance = ?, updated_at = ? WHERE moneda = ? AND cuenta = ?",
+                (monto, datetime.now().isoformat(), moneda, cuenta)
             )
-        self._conn.commit()
-
-    def get_balance(self, moneda: str = 'Bs') -> float:
-        """Saldo actual = saldo inicial + ingresos - gastos (todo el historial), por moneda."""
-        if moneda not in MONEDAS_VALIDAS:
-            moneda = 'Bs'
-        row = self._conn.execute(
-            """SELECT
-                   COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) -
-                   COALESCE(SUM(CASE WHEN tipo = 'gasto' THEN monto ELSE 0 END), 0)
-               FROM transactions WHERE moneda = ?""",
-            (moneda,)
-        ).fetchone()
-        movimientos = row[0] if row else 0.0
-        return self.get_initial_balance(moneda) + movimientos
-
-    def get_balances(self) -> dict:
-        """Retorna el saldo actual de las 3 monedas: {'Bs': x, 'USD': y, 'COP': z}."""
-        return {m: self.get_balance(m) for m in MONEDAS_VALIDAS}
+            self._conn.execute(
+                """INSERT INTO balance_snapshots
+                   (moneda, cuenta, monto_anterior, monto_nuevo, fuente, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (moneda, cuenta, anterior, monto, fuente, datetime.now().isoformat())
+            )
+            self._conn.commit()
+            logger.info(f"Saldo actualizado: {moneda}/{cuenta} {anterior} -> {monto} (fuente={fuente})")
+            return cuenta, anterior
+        except sqlite3.Error as e:
+            raise StorageError(f"Error al actualizar saldo: {e}")
 
     # ------------------------------------------------------------------ #
     # Resumen
@@ -295,18 +346,6 @@ class DBClient:
             "INSERT INTO fx_rates (page, rate, fetched_at) VALUES (?, ?, ?) "
             "ON CONFLICT(page) DO UPDATE SET rate = excluded.rate, fetched_at = excluded.fetched_at",
             (page, rate, datetime.now().isoformat())
-        )
-        self._conn.commit()
-
-    # ------------------------------------------------------------------ #
-    # Snapshots de saldo bancario (captura de pantalla de saldo, punto 4b)
-    # ------------------------------------------------------------------ #
-
-    def save_balance_snapshot(self, moneda: str, monto_banco: float, monto_bot: float) -> None:
-        self._conn.execute(
-            """INSERT INTO balance_snapshots (moneda, monto_banco, monto_bot, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (moneda, monto_banco, monto_bot, datetime.now().isoformat())
         )
         self._conn.commit()
 
