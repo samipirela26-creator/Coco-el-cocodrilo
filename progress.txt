@@ -16,3 +16,11 @@
   - `get_all_transactions` NO incluye `balance_snapshots` (ajustes directos de saldo) ni `transfer` (movimientos entre billeteras propias) -- solo gasto/ingreso. Si mas adelante se quiere un respaldo mas completo, habria que unir las 3 tablas.
   - Verificado con DB en memoria (`db_path=':memory:'`) que el aislamiento por perfil funciona (un perfil no ve transacciones de otro).
 ---
+
+## [2026-07-02] - US-002
+- Implementado /deshacer: revierte el ultimo gasto/ingreso registrado por el perfil (revierte el delta en la billetera y borra la fila de `transactions`), y confirma con el nuevo saldo.
+- Files changed: src/storage/db.py (nuevo metodo `delete_last_transaction(perfil)`), src/bot/telegram_handler.py (nuevo `deshacer_command`, agregado a /help y bienvenida), src/main.py (registrado el CommandHandler).
+- **Learnings for future iterations:**
+  - Alcance reducido a proposito: NO deshace ajustes de saldo directos (`set_wallet_balance`, usados por /saldo_inicial y frases tipo "tengo X en efectivo") ni `transfer()` (mueve dinero entre billeteras propias). Ambos dejan registro en `balance_snapshots`, pero un `transfer()` inserta 2 filas con el mismo `created_at` (una por cada billetera) mientras que un ajuste simple inserta 1 -- revertirlos de forma segura requeriria distinguir ese caso y tocar 2 billeteras a la vez. Se dejo fuera para no arriesgar corromper saldos en una primera iteracion; si se pide extender /deshacer a estos casos, ese es el punto de partida.
+  - Testeado con DB en memoria: revertir un gasto de $5 en Efectivo deja el balance en 0 (estaba en -5), un segundo /deshacer sin nada que deshacer retorna None (el comando responde con mensaje amigable, no error), y el aislamiento por perfil se mantiene.
+---

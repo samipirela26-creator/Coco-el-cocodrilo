@@ -313,6 +313,44 @@ class DBClient:
         except sqlite3.Error as e:
             raise StorageError(f"Error al guardar transacción: {e}")
 
+    def delete_last_transaction(self, perfil: str) -> dict:
+        """Deshace el último gasto/ingreso registrado DE ESTE PERFIL: revierte
+        el delta en la billetera correspondiente y borra la fila de
+        `transactions`. Retorna un dict con los datos de lo borrado (para el
+        mensaje de confirmación), o None si el perfil no tiene nada que
+        deshacer.
+
+        Nota de alcance (US-002): solo revierte gasto/ingreso, NO ajustes de
+        saldo directos (/saldo_inicial, "tengo X en efectivo") ni
+        transferencias entre billeteras propias -- esos quedan para una
+        futura iteración si hace falta, ver progress.txt."""
+        row = self._conn.execute(
+            """SELECT id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha
+               FROM transactions WHERE perfil = ? ORDER BY id DESC LIMIT 1""",
+            (perfil,)
+        ).fetchone()
+        if row is None:
+            return None
+        tx_id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha = row
+        try:
+            delta = -monto if tipo == 'ingreso' else monto  # revierte el delta original
+            self._conn.execute(
+                "UPDATE wallets SET balance = balance + ?, updated_at = ? "
+                "WHERE perfil = ? AND moneda = ? AND cuenta = ?",
+                (delta, datetime.now().isoformat(), perfil, moneda, cuenta)
+            )
+            self._conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+            self._conn.commit()
+            nuevo_balance = self.get_wallet_balance(perfil, moneda, cuenta)
+            logger.info(f"Transacción deshecha [{perfil}]: id={tx_id} {tipo} {moneda}/{cuenta} {monto} - {categoria}")
+            return {
+                "tipo": tipo, "monto": monto, "moneda": moneda, "cuenta": cuenta,
+                "categoria": categoria, "descripcion": descripcion, "fecha": fecha,
+                "nuevo_balance": nuevo_balance,
+            }
+        except sqlite3.Error as e:
+            raise StorageError(f"Error al deshacer la transacción: {e}")
+
     def _ensure_category(self, categoria: str, perfil: str) -> None:
         """Inserta la categoría dinámica en `categories` (scopeada al perfil)
         si no existe."""

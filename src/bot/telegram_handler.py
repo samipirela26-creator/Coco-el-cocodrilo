@@ -126,6 +126,7 @@ Comandos:
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
 /exportar - descargar un respaldo CSV de todos sus movimientos
+/deshacer - revertir el último gasto o ingreso registrado
 /help - ver categorías y ayuda"""
 
 
@@ -181,7 +182,8 @@ Comandos:
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
 /cambio - tasas BCV, Binance y USD->COP
-/exportar - descargar un CSV con todo su historial (respaldo manual)"""
+/exportar - descargar un CSV con todo su historial (respaldo manual)
+/deshacer - revierte el último gasto/ingreso, por si algo se registró mal"""
     await _reply(update, help_message)
 
 
@@ -408,6 +410,37 @@ async def exportar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             filename=nombre_archivo,
             caption=f"🐊 Aquí tiene su respaldo: {len(transacciones)} movimiento{'s' if len(transacciones) != 1 else ''}.",
         )
+
+
+async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Revierte el último gasto/ingreso registrado por este perfil (por si el
+    LLM entendió mal un monto o categoría). No deshace ajustes de saldo
+    directos ni transferencias entre billeteras propias -- solo gasto/ingreso."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+
+    try:
+        deshecho = db.delete_last_transaction(perfil)
+    except StorageError as e:
+        await _reply(update, f"❌ Error al deshacer: {e}")
+        return
+
+    if deshecho is None:
+        await _reply(update, "No tengo ningún gasto o ingreso reciente suyo que deshacer.")
+        return
+
+    emoji = "💸" if deshecho['tipo'] == 'gasto' else "💵"
+    tipo_str = "gasto" if deshecho['tipo'] == 'gasto' else "ingreso"
+    simbolo = MONEDA_SIMBOLO.get(deshecho['moneda'], '')
+    await _reply(
+        update,
+        f"🐊 Listo, deshecho.\n\n"
+        f"{emoji} Ese {tipo_str} de {simbolo} {deshecho['monto']:.2f} {deshecho['moneda']} "
+        f"({deshecho['categoria']}, {deshecho['fecha']}) ya no cuenta.\n\n"
+        f"💰 Saldo en {deshecho['cuenta']} ({deshecho['moneda']}): {deshecho['nuevo_balance']:,.2f}"
+    )
 
 
 # ---------------------------------------------------------------------- #

@@ -14,8 +14,8 @@
       "id": "US-002",
       "priority": 2,
       "title": "Comando /deshacer (revertir el ultimo movimiento)",
-      "description": "Nuevo comando /deshacer que revierte la ultima transaccion (gasto/ingreso) o el ultimo ajuste de saldo del perfil, restaurando el saldo de la billetera afectada y eliminando el registro. Util para corregir errores del LLM sin tener que editar la base a mano.",
-      "passes": false
+      "description": "Nuevo comando /deshacer que revierte la ultima transaccion (gasto/ingreso) del perfil, restaurando el saldo de la billetera afectada y eliminando el registro. Util para corregir errores del LLM sin tener que editar la base a mano. Alcance reducido en la implementacion: NO cubre ajustes de saldo directos ni transferencias entre billeteras propias (ver progress.txt), solo gasto/ingreso -- que es el caso de correccion mas comun.",
+      "passes": true
     },
     {
       "id": "US-003",
