@@ -251,6 +251,18 @@ class DBClient:
                 )
             """)
 
+    def is_new_profile(self, perfil: str) -> bool:
+        """True si este perfil nunca ha sido visto (todavía no tiene ninguna
+        billetera creada). Se usa para saludar UNA sola vez a un usuario nuevo
+        que se registra solo (registro abierto: cualquiera que le escriba a
+        Coco por primera vez recibe su propio perfil aislado, sin que haya
+        que agregarlo a mano en ALLOWED_USER_IDS/USER_PROFILES). Debe llamarse
+        ANTES de cualquier operación que dispare _ensure_wallets_for_profile."""
+        row = self._conn.execute(
+            "SELECT 1 FROM wallets WHERE perfil = ? LIMIT 1", (perfil,)
+        ).fetchone()
+        return row is None
+
     def _ensure_wallets_for_profile(self, perfil: str) -> None:
         """Crea las 4 billeteras del perfil si aún no existen (saldo 0, salvo
         Bs/BDV que arranca con INITIAL_BALANCE la primera vez que se ve ese

@@ -87,12 +87,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await help_command(update, context)
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update, context):
-        return
-    welcome_message = """¡Hola! 👋
-
-Soy tu bot de finanzas personales. Envíame tus gastos, ingresos o saldos en
+def _welcome_text(nuevo_registro: bool = False) -> str:
+    intro = (
+        "¡Hola! 👋 Te acabo de registrar con tu propio perfil, separado del de "
+        "cualquier otra persona que me escriba -- tus saldos y gastos son solo "
+        "tuyos.\n\n"
+        if nuevo_registro else "¡Hola! 👋\n\n"
+    )
+    return intro + """Soy tu bot de finanzas personales. Envíame tus gastos, ingresos o saldos en
 lenguaje natural (texto, foto de una captura, o nota de voz) y los voy a
 registrar.
 
@@ -125,7 +127,23 @@ Comandos:
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
 /help - ver categorías y ayuda"""
-    await update.message.reply_text(welcome_message)
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update, context):
+        return
+    await _reply(update, _welcome_text())
+
+
+async def _maybe_welcome_new_profile(update: Update, context: ContextTypes.DEFAULT_TYPE, perfil: str) -> None:
+    """Registro abierto: si es la primera vez que se ve este perfil (nadie lo
+    agregó a mano en USER_PROFILES), le manda el saludo de bienvenida UNA
+    sola vez, antes de procesar su mensaje/foto/nota de voz con normalidad.
+    Cada perfil nuevo queda aislado (sus propios saldos/gastos), no ve nada
+    de los demás."""
+    db: DBClient = context.bot_data['db']
+    if db.is_new_profile(perfil):
+        await _reply(update, _welcome_text(nuevo_registro=True))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -482,6 +500,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
 
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
     llm_connector: LLMConnector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
@@ -546,6 +565,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
     llm_connector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
@@ -612,6 +632,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
     llm_connector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
