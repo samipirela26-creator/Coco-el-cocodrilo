@@ -127,6 +127,7 @@ Comandos:
 /cambio - ver tasas BCV y Binance
 /exportar - descargar un respaldo CSV de todos sus movimientos
 /deshacer - revertir el último gasto o ingreso registrado
+/presupuesto [categoría] [monto] - fijar o ver topes mensuales por categoría
 /help - ver categorías y ayuda"""
 
 
@@ -183,7 +184,9 @@ Comandos:
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
 /cambio - tasas BCV, Binance y USD->COP
 /exportar - descargar un CSV con todo su historial (respaldo manual)
-/deshacer - revierte el último gasto/ingreso, por si algo se registró mal"""
+/deshacer - revierte el último gasto/ingreso, por si algo se registró mal
+/presupuesto <categoría> <monto en Bs> - fija un tope mensual; sin argumentos, lo lista
+  (le aviso en la confirmación del gasto si va llegando al 80% o ya lo superó)"""
     await _reply(update, help_message)
 
 
@@ -443,6 +446,65 @@ async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/presupuesto sin argumentos -> lista los presupuestos fijados.
+    /presupuesto <categoria> <monto> -> fija (o reemplaza) el límite mensual
+    en Bs de esa categoría. /presupuesto <categoria> 0 -> lo elimina.
+    Los límites son en Bs porque es la moneda del gasto del día a día."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    categories = context.bot_data.get('categories', [])
+    args = context.args
+
+    if not args:
+        presupuestos = db.get_all_budgets(perfil)
+        if not presupuestos:
+            await _reply(
+                update,
+                "No tiene presupuestos fijados todavía.\n\n"
+                "Uso: /presupuesto <categoría> <monto en Bs>\n"
+                "Ej: /presupuesto Delivery 500\n"
+                "Para quitarlo: /presupuesto Delivery 0"
+            )
+            return
+        from datetime import datetime as _datetime
+        hoy_str = _datetime.now().strftime("%Y-%m-%d")
+        lines = ["📊 Sus presupuestos mensuales (Bs):\n"]
+        for p in presupuestos:
+            estado = db.get_budget_status(perfil, p['categoria'], hoy_str)
+            gastado = estado['gastado'] if estado else 0.0
+            lines.append(f"• {p['categoria']}: {gastado:,.2f} / {p['limite_mensual']:,.2f}")
+        await _reply(update, '\n'.join(lines))
+        return
+
+    if len(args) < 2:
+        await _reply(update, "Uso: /presupuesto <categoría> <monto en Bs>\nEj: /presupuesto Delivery 500")
+        return
+
+    *categoria_parts, monto_str = args
+    categoria_arg = ' '.join(categoria_parts)
+    try:
+        monto = float(monto_str.replace(',', '.'))
+    except ValueError:
+        await _reply(update, "❌ El monto debe ser un número, ej: /presupuesto Delivery 500")
+        return
+
+    categoria = next((c for c in categories if c.lower() == categoria_arg.lower()), categoria_arg)
+
+    try:
+        db.set_budget(perfil, categoria, monto)
+    except StorageError as e:
+        await _reply(update, f"❌ Error al fijar el presupuesto: {e}")
+        return
+
+    if monto <= 0:
+        await _reply(update, f"🐊 Listo, ya no tiene un límite fijado para {categoria}.")
+    else:
+        await _reply(update, f"🐊 Anotado: {categoria} tiene un tope de {monto:,.2f} Bs al mes. Le avisaré si se acerca.")
+
+
 # ---------------------------------------------------------------------- #
 # Guardado compartido (texto, voz, y fotos de transferencia)
 # ---------------------------------------------------------------------- #
@@ -453,7 +515,26 @@ def _coco_line(respuesta: str) -> str:
     return f"\n\n🐊 {respuesta}" if respuesta else ""
 
 
-def format_confirmation_message(expense_data: dict, balance: float, cuenta: str) -> str:
+def _budget_alert_line(estado: dict, categoria: str) -> str:
+    """Linea corta (tono de banquero, sin alarmismo) cuando un gasto acerca o
+    supera el presupuesto mensual de su categoria. None/"" si no aplica."""
+    if not estado or estado['limite_mensual'] <= 0:
+        return ""
+    porcentaje = estado['porcentaje']
+    if porcentaje >= 100:
+        return (
+            f"\n\n📊 Este mes ya superó su presupuesto de {categoria} "
+            f"({estado['gastado']:,.2f} de {estado['limite_mensual']:,.2f} Bs)."
+        )
+    if porcentaje >= 80:
+        return (
+            f"\n\n📊 Va en {porcentaje:.0f}% de su presupuesto de {categoria} este mes "
+            f"({estado['gastado']:,.2f} de {estado['limite_mensual']:,.2f} Bs)."
+        )
+    return ""
+
+
+def format_confirmation_message(expense_data: dict, balance: float, cuenta: str, budget_status: dict = None) -> str:
     emoji = "💸" if expense_data['tipo'] == 'gasto' else "💵"
     tipo_str = "Gasto" if expense_data['tipo'] == 'gasto' else "Ingreso"
     moneda = expense_data.get('moneda', 'Bs')
@@ -466,7 +547,9 @@ def format_confirmation_message(expense_data: dict, balance: float, cuenta: str)
 📅 Fecha: {expense_data['fecha']}
 📝 {expense_data['descripcion']}
 
-💰 Saldo en {cuenta} ({moneda}): {balance:,.2f}""" + _coco_line(expense_data.get('respuesta'))
+💰 Saldo en {cuenta} ({moneda}): {balance:,.2f}""" \
+        + _budget_alert_line(budget_status, expense_data['categoria']) \
+        + _coco_line(expense_data.get('respuesta'))
 
 
 def format_ajuste_message(moneda: str, cuenta: str, anterior: float, nuevo: float, respuesta: str = "") -> str:
@@ -551,7 +634,10 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
         cuenta=data.get('cuenta'),
     )
     balance = db.get_wallet_balance(perfil, moneda, cuenta_resuelta)
-    confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta)
+    budget_status = None
+    if data['tipo'] == 'gasto' and moneda == 'Bs':
+        budget_status = db.get_budget_status(perfil, data['categoria'], data['fecha'])
+    confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta, budget_status)
     await update.message.reply_text(f"{prefix}{confirmation_message}")
 
 

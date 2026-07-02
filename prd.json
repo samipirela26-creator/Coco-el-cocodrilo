@@ -21,8 +21,8 @@
       "id": "US-003",
       "priority": 3,
       "title": "Presupuestos por categoria con alerta al registrar gasto",
-      "description": "Nueva tabla budgets (perfil, categoria, limite_mensual). Comando /presupuesto <categoria> <monto> para fijar/ver limites. Al registrar un gasto que hace superar el 80% o el 100% del limite mensual de su categoria, Coco lo menciona en la confirmacion (tono banquero, sin alarmismo).",
-      "passes": false
+      "description": "Nueva tabla budgets (perfil, categoria, limite_mensual). Comando /presupuesto <categoria> <monto> para fijar/ver limites. Al registrar un gasto que hace superar el 80% o el 100% del limite mensual de su categoria, Coco lo menciona en la confirmacion (tono banquero, sin alarmismo). Limites en Bs (moneda del gasto diario); gastos en USD/COP no se cuentan contra el presupuesto en esta iteracion.",
+      "passes": true
     },
     {
       "id": "US-004",
