@@ -1,0 +1,42 @@
+{
+  "projectName": "gastos-bot (Coco el Cocodrilo)",
+  "description": "Mejoras incrementales al bot de finanzas personales de Telegram: respaldo de datos, corrección de errores, presupuestos por categoría y alertas de tasa de cambio. Ejecutado en modo 'Ralph' (autónomo, una historia a la vez, con verificación y commit por historia) directamente por Claude dentro de esta sesión -- sin subproceso CLI anidado, para mantener control y no arriesgar el manejo de secretos reales (token de Telegram, API keys) de una app financiera en producción.",
+  "branchName": "master",
+  "stories": [
+    {
+      "id": "US-001",
+      "priority": 1,
+      "title": "Comando /exportar (respaldo CSV de transacciones)",
+      "description": "Nuevo comando /exportar que genera un CSV con todas las transacciones del perfil (fecha, tipo, monto, moneda, cuenta, categoria, descripcion) y lo envia como documento de Telegram. Sirve de respaldo manual ante cualquier perdida de la base SQLite. Debe respetar el aislamiento por perfil.",
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "priority": 2,
+      "title": "Comando /deshacer (revertir el ultimo movimiento)",
+      "description": "Nuevo comando /deshacer que revierte la ultima transaccion (gasto/ingreso) o el ultimo ajuste de saldo del perfil, restaurando el saldo de la billetera afectada y eliminando el registro. Util para corregir errores del LLM sin tener que editar la base a mano.",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "priority": 3,
+      "title": "Presupuestos por categoria con alerta al registrar gasto",
+      "description": "Nueva tabla budgets (perfil, categoria, limite_mensual). Comando /presupuesto <categoria> <monto> para fijar/ver limites. Al registrar un gasto que hace superar el 80% o el 100% del limite mensual de su categoria, Coco lo menciona en la confirmacion (tono banquero, sin alarmismo).",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "priority": 4,
+      "title": "Aviso de variacion relevante en la tasa de cambio",
+      "description": "Al consultar /cambio o /saldo, si la tasa BCV o Binance actual difiere mas de 3% respecto al ultimo valor cacheado en fx_rates, agregar una linea breve indicando la variacion (subio/bajo X%). No requiere jobs nuevos, se calcula al vuelo comparando con el valor cacheado previo antes de sobrescribirlo.",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "priority": 5,
+      "title": "Comando /racha explicito",
+      "description": "Nuevo comando /racha que muestra la racha actual de dias consecutivos registrando gastos (ya calculada en db.get_current_streak), con un mensaje corto en la voz de Coco. Hoy la racha solo se ve dentro de /saldo.",
+      "passes": false
+    }
+  ]
+}

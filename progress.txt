@@ -1,0 +1,18 @@
+## Codebase Patterns
+- Todas las tablas financieras (transactions, wallets, balance_snapshots, categories) estan particionadas por `perfil` (TEXT). Cualquier query/metodo nuevo en db.py DEBE recibir `perfil` y filtrar por el, nunca leer/escribir sin ese filtro.
+- `_ensure_wallets_for_profile(perfil)` se llama al inicio de casi cualquier metodo de billeteras -- crea las 4 billeteras (Bs/BDV, USD/Binance, USD/Efectivo, COP/Efectivo) en 0 si es la primera vez que se ve ese perfil. `is_new_profile(perfil)` debe llamarse ANTES de cualquier metodo que dispare esto, si se necesita saber si es la primera vez.
+- Comandos nuevos en telegram_handler.py siguen el patron: `async def X_command(update, context)` -> `if not _is_allowed(update, context): return` -> obtener `db`/`perfil` -> logica -> `await _reply(update, texto)` (usar `_reply`, no `update.message.reply_text`, asi el comando tambien funciona como boton del /menu si se agrega ahi).
+- Registrar todo comando nuevo en src/main.py: import + `application.add_handler(CommandHandler("nombre", funcion))`.
+- Verificacion: `python3 -m py_compile src/bot/telegram_handler.py src/storage/db.py src/main.py` (compile check) + `.venv/bin/python -c "import src.main"` (smoke test de imports; el `python3` del sistema NO tiene `dotenv` instalado, hay que usar el venv). Para probar logica de db.py sin levantar el bot: `.venv/bin/python -c "from src.storage.db import DBClient; db = DBClient(db_path=':memory:', initial_balance=0, fixed_categories=['Otros']); ..."`.
+- Personalidad de Coco: TODO texto fijo dirigido al usuario (comandos, errores) usa "usted" formal, tono de banquero de confianza, emojis minimos (solo los ya establecidos: 🐊 para la voz de Coco, y uno por seccion como maximo). Nunca "tu"/"tú"/"Intenta"/"Usa" informal -- usar "su"/"usted"/"Intente"/"Use". La voz LLM-generada (_persona_coco en prompt_builder.py) ya sigue este registro; los textos hardcodeados deben ser consistentes con ella (unificado en commit 5093de6).
+- MONEDA_SIMBOLO y CUENTA_EMOJI (en telegram_handler.py) son los diccionarios de simbolos/emoji reusables para mensajes de saldo/transferencia.
+- Nunca commitear .env ni *.db (ya estan en .gitignore). Nunca imprimir secretos reales en output visible.
+- Para mandar un archivo (no solo texto) hay que usar `target.reply_document(...)` con `target = update.message or update.callback_query.message` (mismo patron que `_reply`, pero `_reply` solo soporta texto por ahora -- reply_document se llama aparte).
+
+## [2026-07-02] - US-001
+- Implementado /exportar: comando que genera un CSV (con BOM utf-8-sig para que Excel lea bien los acentos) de todas las transacciones (gasto/ingreso) del perfil y lo manda como documento de Telegram.
+- Files changed: src/storage/db.py (nuevo metodo `get_all_transactions(perfil)`), src/bot/telegram_handler.py (nuevo `exportar_command`, agregado a los textos de /help y de bienvenida), src/main.py (registrado el CommandHandler).
+- **Learnings for future iterations:**
+  - `get_all_transactions` NO incluye `balance_snapshots` (ajustes directos de saldo) ni `transfer` (movimientos entre billeteras propias) -- solo gasto/ingreso. Si mas adelante se quiere un respaldo mas completo, habria que unir las 3 tablas.
+  - Verificado con DB en memoria (`db_path=':memory:'`) que el aislamiento por perfil funciona (un perfil no ve transacciones de otro).
+---

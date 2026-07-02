@@ -537,6 +537,29 @@ class DBClient:
         }
 
     # ------------------------------------------------------------------ #
+    # Exportación (respaldo manual vía /exportar)
+    # ------------------------------------------------------------------ #
+
+    def get_all_transactions(self, perfil: str) -> list:
+        """Retorna TODAS las transacciones (gastos e ingresos) de este perfil,
+        de más antigua a más reciente, para el respaldo CSV de /exportar.
+        No incluye ajustes de saldo directos (`balance_snapshots`) ni
+        transferencias entre billeteras propias -- solo movimientos de
+        gasto/ingreso, que es lo que la mayoría espera ver en un respaldo."""
+        rows = self._conn.execute(
+            """SELECT fecha, tipo, monto, moneda, cuenta, categoria, descripcion, created_at
+               FROM transactions WHERE perfil = ? ORDER BY fecha ASC, id ASC""",
+            (perfil,)
+        ).fetchall()
+        return [
+            {
+                "fecha": r[0], "tipo": r[1], "monto": r[2], "moneda": r[3],
+                "cuenta": r[4], "categoria": r[5], "descripcion": r[6], "created_at": r[7],
+            }
+            for r in rows
+        ]
+
+    # ------------------------------------------------------------------ #
     # Racha de días registrando (para el recordatorio nocturno de Coco)
     # ------------------------------------------------------------------ #
 

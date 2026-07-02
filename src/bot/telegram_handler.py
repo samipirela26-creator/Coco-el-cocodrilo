@@ -125,6 +125,7 @@ Comandos:
 /resumen - ver gastos del mes por categoría (con porcentajes)
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
+/exportar - descargar un respaldo CSV de todos sus movimientos
 /help - ver categorías y ayuda"""
 
 
@@ -179,7 +180,8 @@ Comandos:
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
-/cambio - tasas BCV, Binance y USD->COP"""
+/cambio - tasas BCV, Binance y USD->COP
+/exportar - descargar un CSV con todo su historial (respaldo manual)"""
     await _reply(update, help_message)
 
 
@@ -362,6 +364,50 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     lines.append(_format_rates_block(bcv, binance))
 
     await _reply(update, '\n'.join(lines))
+
+
+async def exportar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Respaldo manual: genera un CSV con todo el historial de gastos/ingresos
+    de este perfil y lo envía como documento de Telegram. Útil como copia de
+    seguridad ante cualquier problema con la base de datos del servidor."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+
+    try:
+        transacciones = db.get_all_transactions(perfil)
+    except StorageError as e:
+        await _reply(update, f"❌ Error al generar su respaldo: {e}")
+        return
+
+    if not transacciones:
+        await _reply(update, "Todavía no tiene movimientos registrados, así que no hay nada que exportar.")
+        return
+
+    import csv
+    import io as _io
+    buffer = _io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["fecha", "tipo", "monto", "moneda", "cuenta", "categoria", "descripcion", "registrado_el"])
+    for t in transacciones:
+        writer.writerow([
+            t["fecha"], t["tipo"], f"{t['monto']:.2f}", t["moneda"],
+            t["cuenta"], t["categoria"], t["descripcion"] or "", t["created_at"],
+        ])
+
+    data_bytes = buffer.getvalue().encode("utf-8-sig")  # BOM para que Excel lea bien los acentos
+    from datetime import datetime as _datetime
+    hoy = _datetime.now().strftime("%Y-%m-%d")
+    nombre_archivo = f"coco_respaldo_{hoy}.csv"
+
+    target = update.message or (update.callback_query.message if update.callback_query else None)
+    if target:
+        await target.reply_document(
+            document=_io.BytesIO(data_bytes),
+            filename=nombre_archivo,
+            caption=f"🐊 Aquí tiene su respaldo: {len(transacciones)} movimiento{'s' if len(transacciones) != 1 else ''}.",
+        )
 
 
 # ---------------------------------------------------------------------- #
