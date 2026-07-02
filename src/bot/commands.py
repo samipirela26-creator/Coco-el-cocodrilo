@@ -15,10 +15,12 @@ from src.storage.db import DBClient
 from src.services import fx
 from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
-from src.bot.replies import _reply, _menu_keyboard
+from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard
 from src.bot.formatters import _format_rates_block, _rate_variation_pct
 from src.bot.texts import _welcome_text, _help_text
 from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI
+from src.reports.weekly_image import render_monthly_report, MESES_ES
+from src.reports.balance_image import render_balance_report
 
 logger = logging.getLogger('gastos-bot')
 
@@ -130,6 +132,21 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append(_format_rates_block(bcv, binance, bcv_var, binance_var))
 
         await _reply(update, '\n'.join(lines))
+
+        items = [{"label": f"{CUENTA_EMOJI['BDV']} BDV (Bs)", "value_str": f"{bs_bdv:,.2f} Bs",
+                  "usd_equiv": (bs_bdv / binance) if binance else 0.0}]
+        if usd_binance:
+            items.append({"label": f"{CUENTA_EMOJI['Binance']} Binance (USD)",
+                           "value_str": f"$ {usd_binance:,.2f}", "usd_equiv": usd_binance})
+        if usd_efectivo:
+            items.append({"label": f"{CUENTA_EMOJI['Efectivo']} Efectivo (USD)",
+                           "value_str": f"$ {usd_efectivo:,.2f}", "usd_equiv": usd_efectivo})
+        if cop_efectivo:
+            items.append({"label": f"{CUENTA_EMOJI['Efectivo']} Efectivo (COP)",
+                           "value_str": f"$ {cop_efectivo:,.2f}", "usd_equiv": efectivo_cop_en_usd})
+        total_usd_img = ((bs_bdv / binance) + usd_binance + efectivo_total_usd) if binance else None
+        image_bytes = render_balance_report(items, total_usd=total_usd_img)
+        await _reply_photo(update, image_bytes, caption="💰 Su saldo actual")
     except StorageError as e:
         await _reply(update, f"❌ Error al consultar el saldo: {e}")
 
@@ -193,11 +210,15 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+def _mes_adyacente(year: int, month: int, delta: int) -> tuple:
+    """delta=-1 -> mes anterior, delta=+1 -> mes siguiente."""
+    total = year * 12 + (month - 1) + delta
+    return total // 12, total % 12 + 1
+
+
 async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
-    db: DBClient = context.bot_data['db']
-    perfil = _perfil_de(update.effective_user.id, context)
 
     args = context.args
     if args:
@@ -209,6 +230,30 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         now = datetime.now()
         year, month = now.year, now.month
+
+    await _send_resumen(update, context, year, month)
+
+
+async def resumen_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botones "◀ Mes anterior" / "Mes siguiente ▶" de /resumen."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    await query.answer()
+    try:
+        year, month = map(int, (query.data or "").split(":", 1)[-1].split('-'))
+    except ValueError:
+        return
+    await _send_resumen(update, context, year, month)
+
+
+async def _send_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE, year: int, month: int) -> None:
+    """Lógica compartida por /resumen y los botones de navegación de mes:
+    arma el texto (con botones ◀/▶) y manda una imagen por cada moneda con
+    gastos ese mes."""
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
 
     last_day = calendar.monthrange(year, month)[1]
     fecha_desde = f"{year:04d}-{month:02d}-01"
@@ -222,14 +267,23 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _reply(update, f"❌ Error al calcular el resumen: {e}")
         return
 
+    prev_year, prev_month = _mes_adyacente(year, month, -1)
+    next_year, next_month = _mes_adyacente(year, month, 1)
+    nav_keyboard = _resumen_nav_keyboard(prev_year, prev_month, next_year, next_month)
+
     tiene_movimientos = any(
         s['total_gastos'] > 0 or s['total_ingresos'] > 0 for s in summaries.values()
     )
     if not tiene_movimientos:
-        await _reply(update, f"No hay movimientos registrados en {year:04d}-{month:02d}.")
+        await _reply(
+            update,
+            f"No hay movimientos registrados en {MESES_ES[month].capitalize()} {year}.",
+            reply_markup=nav_keyboard,
+        )
         return
 
-    lines = [f"📊 Resumen {year:04d}-{month:02d}\n"]
+    mes_label = f"{MESES_ES[month].capitalize()} {year}"
+    lines = [f"📊 Resumen {mes_label}\n"]
     for moneda, summary in summaries.items():
         if summary['total_gastos'] == 0 and summary['total_ingresos'] == 0:
             continue
@@ -243,7 +297,16 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     lines.append(_format_rates_block(bcv, binance))
 
-    await _reply(update, '\n'.join(lines))
+    await _reply(update, '\n'.join(lines), reply_markup=nav_keyboard)
+
+    for moneda, summary in summaries.items():
+        if summary['total_gastos'] <= 0:
+            continue
+        try:
+            image_bytes = render_monthly_report(summary, moneda=moneda, year=year, month=month)
+            await _reply_photo(update, image_bytes, caption=f"📊 {moneda} — {mes_label}")
+        except Exception as e:
+            logger.warning(f"No se pudo generar la imagen de resumen ({moneda}) [{perfil}]: {e}")
 
 
 async def exportar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -287,6 +350,18 @@ async def exportar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
 
+def _formatear_deshecho(deshecho: dict) -> str:
+    emoji = "💸" if deshecho['tipo'] == 'gasto' else "💵"
+    tipo_str = "gasto" if deshecho['tipo'] == 'gasto' else "ingreso"
+    simbolo = MONEDA_SIMBOLO.get(deshecho['moneda'], '')
+    return (
+        f"🐊 Listo, deshecho.\n\n"
+        f"{emoji} Ese {tipo_str} de {simbolo} {deshecho['monto']:.2f} {deshecho['moneda']} "
+        f"({deshecho['categoria']}, {deshecho['fecha']}) ya no cuenta.\n\n"
+        f"💰 Saldo en {deshecho['cuenta']} ({deshecho['moneda']}): {deshecho['nuevo_balance']:,.2f}"
+    )
+
+
 async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revierte el último gasto/ingreso registrado por este perfil (por si el
     LLM entendió mal un monto o categoría). No deshace ajustes de saldo
@@ -306,16 +381,39 @@ async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await _reply(update, "No tengo ningún gasto o ingreso reciente suyo que deshacer.")
         return
 
-    emoji = "💸" if deshecho['tipo'] == 'gasto' else "💵"
-    tipo_str = "gasto" if deshecho['tipo'] == 'gasto' else "ingreso"
-    simbolo = MONEDA_SIMBOLO.get(deshecho['moneda'], '')
-    await _reply(
-        update,
-        f"🐊 Listo, deshecho.\n\n"
-        f"{emoji} Ese {tipo_str} de {simbolo} {deshecho['monto']:.2f} {deshecho['moneda']} "
-        f"({deshecho['categoria']}, {deshecho['fecha']}) ya no cuenta.\n\n"
-        f"💰 Saldo en {deshecho['cuenta']} ({deshecho['moneda']}): {deshecho['nuevo_balance']:,.2f}"
-    )
+    await _reply(update, _formatear_deshecho(deshecho))
+
+
+async def deshacer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón "↩️ Deshacer" bajo cada confirmación de gasto/ingreso -- misma
+    lógica que /deshacer, pero disparada desde el botón. Siempre deshace el
+    ÚLTIMO movimiento del perfil (igual que el comando), no necesariamente
+    el que muestra el mensaje donde se apretó el botón, si ya se registró
+    algo más nuevo después."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+
+    try:
+        deshecho = db.delete_last_transaction(perfil)
+    except StorageError as e:
+        await query.answer(f"Error al deshacer: {e}", show_alert=True)
+        return
+
+    if deshecho is None:
+        await query.answer("No hay nada reciente que deshacer.", show_alert=True)
+        return
+
+    await query.answer("Deshecho.")
+    try:
+        texto_original = query.message.text or ""
+        await query.edit_message_text(f"{texto_original}\n\n↩️ Deshecho.")
+    except Exception:
+        # Si no se pudo editar (mensaje muy viejo, etc.), igual mandamos la confirmación aparte.
+        await _reply(update, _formatear_deshecho(deshecho))
 
 
 async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

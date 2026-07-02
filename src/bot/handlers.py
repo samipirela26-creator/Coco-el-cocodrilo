@@ -16,6 +16,8 @@ from src.utils.exceptions import (
 )
 from src.bot.access import _is_allowed, _perfil_de
 from src.bot.formatters import format_confirmation_message, format_ajuste_message, format_transferencia_message
+from src.bot.replies import _reply, _deshacer_keyboard, _category_keyboard
+from src.bot.constants import MONEDA_SIMBOLO
 from src.bot.commands import menu_command, _maybe_welcome_new_profile
 
 logger = logging.getLogger('gastos-bot')
@@ -34,7 +36,7 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
     if data['tipo'] == 'ajuste_saldo':
         cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), data['monto'], fuente=fuente)
         mensaje = format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'], data.get('respuesta'))
-        await update.message.reply_text(f"{prefix}{mensaje}")
+        await _reply(update, f"{prefix}{mensaje}")
         return
 
     if data['tipo'] == 'transferencia':
@@ -49,7 +51,7 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
             fuente=fuente,
         )
         mensaje = format_transferencia_message(resultado, data.get('respuesta'), data.get('tasa_cambio'))
-        await update.message.reply_text(f"{prefix}{mensaje}")
+        await _reply(update, f"{prefix}{mensaje}")
         return
 
     cuenta_resuelta = db.append_expense(
@@ -68,7 +70,64 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
     if data['tipo'] == 'gasto' and moneda == 'Bs':
         budget_status = db.get_budget_status(perfil, data['categoria'], data['fecha'])
     confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta, budget_status)
-    await update.message.reply_text(f"{prefix}{confirmation_message}")
+    # Botón de deshacer solo para gasto/ingreso (mismo alcance que /deshacer,
+    # que no cubre ajuste_saldo ni transferencia -- ver delete_last_transaction).
+    await _reply(update, f"{prefix}{confirmation_message}", reply_markup=_deshacer_keyboard())
+
+
+async def _offer_category_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, expense_data: dict) -> None:
+    """Cuando el LLM entendió un gasto pero no supo en qué categoría ponerlo
+    (validate_expense_data lo rechaza por categoría vacía), en vez de fallar
+    le ofrecemos botones con las categorías fijas para que el usuario elija.
+    Guarda el resto de los datos ya parseados (monto/fecha/descripción/etc.)
+    en `context.user_data` hasta que llegue la elección (ver category_callback)."""
+    context.user_data['pending_expense'] = expense_data
+    categories = context.bot_data.get('categories', [])
+    moneda = expense_data.get('moneda', 'Bs')
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    try:
+        monto_str = f"{float(expense_data.get('monto', 0)):,.2f}"
+    except (TypeError, ValueError):
+        monto_str = str(expense_data.get('monto', ''))
+    await _reply(
+        update,
+        f"🐊 Entendí un gasto de {simbolo} {monto_str} {moneda}, pero no supe en qué categoría "
+        f"anotarlo. ¿Cuál de estas encaja?",
+        reply_markup=_category_keyboard(categories),
+    )
+
+
+async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de categoría del selector de `_offer_category_picker`: completa
+    el gasto pendiente con la categoría elegida y lo guarda igual que el
+    flujo normal de texto/voz."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    categoria = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_expense', None)
+    if categoria == "__cancel__" or not pending:
+        await query.answer()
+        try:
+            await query.edit_message_text("🐊 Descartado. Cuénteme de nuevo cuando guste.")
+        except Exception:
+            pass
+        return
+
+    await query.answer(f"Categoría: {categoria}")
+    pending['categoria'] = categoria
+    db: DBClient = context.bot_data['db']
+    user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
+    try:
+        await _save_and_confirm(pending, user_id, perfil, db, update, fuente='texto')
+    except StorageError as e:
+        await _reply(update, f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------- #
@@ -109,6 +168,9 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
 
         is_valid, error_message = validate_expense_data(expense_data, categories)
         if not is_valid:
+            if expense_data.get('tipo') == 'gasto' and error_message == "La categoría no puede estar vacía":
+                await _offer_category_picker(update, context, expense_data)
+                return
             await update.message.reply_text(
                 f"❌ {error_message}\n\n💡 Intente reformular con monto y categoría claros."
             )
@@ -244,6 +306,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         is_valid, error_message = validate_expense_data(data, categories)
         if not is_valid:
+            if data.get('tipo') == 'gasto' and error_message == "La categoría no puede estar vacía":
+                await _offer_category_picker(update, context, data)
+                return
             await update.message.reply_text(
                 f"❌ No pude entender la nota de voz: {error_message}"
             )

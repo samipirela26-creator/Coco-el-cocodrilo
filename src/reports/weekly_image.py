@@ -43,6 +43,12 @@ def _load_font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
+MESES_ES = [
+    "", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
 def _week_range(reference: datetime = None) -> tuple:
     """Retorna (lunes, domingo) de la semana que acaba de terminar (o la
     actual, si `reference` cae en domingo se usa esa semana)."""
@@ -53,22 +59,26 @@ def _week_range(reference: datetime = None) -> tuple:
     return monday, sunday
 
 
-def render_weekly_report(summary: dict, moneda: str = "Bs", reference: datetime = None) -> bytes:
+def render_period_report(summary: dict, moneda: str = "Bs", title: str = "GASTOS",
+                          subtitle: str = "", empty_label: str = "en este período") -> bytes:
     """
-    Renderiza el reporte semanal como imagen PNG.
+    Renderiza un reporte de gastos por categoría (donut + leyenda) como
+    imagen PNG. Función genérica reusada tanto por el reporte semanal
+    automático como por /resumen bajo demanda para cualquier mes.
 
     Args:
         summary: dict con "total_gastos" y "categorias" (lista de
             {"categoria", "total", "porcentaje"}), típicamente resultado de
             db.get_summary(fecha_desde, fecha_hasta, moneda=moneda)
         moneda: moneda del reporte (para el label, ej "Bs")
-        reference: fecha de referencia para calcular el rango lunes-domingo
+        title: título superior (ej "GASTOS", "RESUMEN MENSUAL")
+        subtitle: línea bajo el título (ej el rango de fechas o "Junio 2026")
+        empty_label: texto de la segunda línea cuando no hay gastos
+            (ej "esta semana", "este mes")
 
     Returns:
         Bytes de la imagen PNG.
     """
-    monday, sunday = _week_range(reference)
-
     img = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
@@ -80,9 +90,8 @@ def render_weekly_report(summary: dict, moneda: str = "Bs", reference: datetime 
     font_cat_val = _load_font(26, bold=True)
 
     # --- Header: tabs ---
-    draw.text((60, 50), "GASTOS", font=font_tab, fill=ACCENT_YELLOW)
-    date_range_str = f"{monday.strftime('%d %b')} - {sunday.strftime('%d %b %Y')}"
-    draw.text((60, 100), date_range_str, font=font_small, fill=TEXT_GRAY)
+    draw.text((60, 50), title, font=font_tab, fill=ACCENT_YELLOW)
+    draw.text((60, 100), subtitle, font=font_small, fill=TEXT_GRAY)
 
     # --- Total ---
     draw.text((60, 170), "Total gastado", font=font_label, fill=TEXT_GRAY)
@@ -98,7 +107,7 @@ def render_weekly_report(summary: dict, moneda: str = "Bs", reference: datetime 
     if not categorias or total <= 0:
         draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=CARD_COLOR, width=thickness)
         msg = "No hubo gastos"
-        msg2 = "esta semana"
+        msg2 = empty_label
         bbox = draw.textbbox((0, 0), msg, font=font_label)
         w = bbox[2] - bbox[0]
         draw.text((cx - w / 2, cy - 25), msg, font=font_label, fill=TEXT_GRAY)
@@ -153,3 +162,21 @@ def render_weekly_report(summary: dict, moneda: str = "Bs", reference: datetime 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def render_weekly_report(summary: dict, moneda: str = "Bs", reference: datetime = None) -> bytes:
+    """Reporte semanal (lunes-domingo) -- usado por el job automático del
+    domingo 8am en main.py. Wrapper de `render_period_report` que preserva
+    el comportamiento/formato original."""
+    monday, sunday = _week_range(reference)
+    date_range_str = f"{monday.strftime('%d %b')} - {sunday.strftime('%d %b %Y')}"
+    return render_period_report(summary, moneda, "GASTOS", date_range_str, "esta semana")
+
+
+def render_monthly_report(summary: dict, moneda: str = "Bs", year: int = None, month: int = None) -> bytes:
+    """Reporte de un mes cualquiera -- usado por /resumen bajo demanda."""
+    now = datetime.now()
+    year = year or now.year
+    month = month or now.month
+    subtitle = f"{MESES_ES[month].capitalize()} {year}"
+    return render_period_report(summary, moneda, "RESUMEN MENSUAL", subtitle, "este mes")

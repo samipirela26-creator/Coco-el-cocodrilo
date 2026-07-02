@@ -16,8 +16,11 @@ from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
     presupuesto_command, racha_command, menu_command, menu_callback,
+    resumen_nav_callback, deshacer_callback,
 )
-from src.bot.handlers import handle_message, handle_photo, handle_voice, error_handler
+from src.bot.handlers import (
+    handle_message, handle_photo, handle_voice, error_handler, category_callback,
+)
 
 logger = None
 
@@ -140,6 +143,9 @@ def main():
         application.add_handler(CommandHandler("racha", racha_command))
         application.add_handler(CommandHandler("menu", menu_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
+        application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
+        application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
+        application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )
