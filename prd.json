@@ -36,7 +36,7 @@
       "priority": 5,
       "title": "Comando /racha explicito",
       "description": "Nuevo comando /racha que muestra la racha actual de dias consecutivos registrando gastos (ya calculada en db.get_current_streak), con un mensaje corto en la voz de Coco. Hoy la racha solo se ve dentro de /saldo.",
-      "passes": false
+      "passes": true
     }
   ]
 }

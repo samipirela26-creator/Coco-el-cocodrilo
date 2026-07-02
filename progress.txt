@@ -44,3 +44,12 @@
   - Para testear esto sin llamar la API real: `db._conn.execute("UPDATE fx_rates SET fetched_at = '2000-01-01T00:00:00' WHERE page=?", (cache_key,))` fuerza que el cache se vea vencido, y luego se puede monkeypatchear `fx._fetch_rate_from_api = lambda page: <valor>` para controlar qué "nueva" tasa llega.
   - El umbral de 3% y el emoji 🔺/🔻 están en `_variation_note` (telegram_handler.py) -- si se quiere ajustar la sensibilidad del aviso, es el único lugar a tocar.
 ---
+
+## [2026-07-02] - US-005
+- Nuevo comando /racha: expone directamente `db.get_current_streak(perfil)` (ya existía, solo se veía dentro de /saldo) con un mensaje corto en la voz de Coco. Maneja el caso 0 (sin racha activa) con un mensaje de aliento en vez de un simple "0".
+- Files changed: src/bot/telegram_handler.py (nuevo `racha_command`, agregado a /help y bienvenida), src/main.py (registrado el CommandHandler).
+- **Learnings for future iterations:**
+  - No hizo falta tocar db.py -- `get_current_streak(perfil, reference_date=None)` ya existía y es reutilizable tal cual.
+  - Con esta historia se completó el PRD inicial (US-001 a US-005), todas con `passes: true`. Ver la sección "Codebase Patterns" al inicio de este archivo antes de agregar nuevas historias -- resume las convenciones ya establecidas (aislamiento por perfil, uso de `_reply`, registro en main.py, verificación con py_compile + smoke tests en `.venv/bin/python`).
+  - Ideas para una futura ronda (no implementadas, quedan como backlog si se quiere seguir): extender /deshacer a ajustes de saldo y transferencias (ver nota en US-002); soportar presupuestos en USD/COP además de Bs; agrupar /racha y el recordatorio nocturno de main.py para que compartan la misma lógica de "achievement" (ej. avisar hitos como 7/30 días).
+---

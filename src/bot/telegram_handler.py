@@ -128,6 +128,7 @@ Comandos:
 /exportar - descargar un respaldo CSV de todos sus movimientos
 /deshacer - revertir el último gasto o ingreso registrado
 /presupuesto [categoría] [monto] - fijar o ver topes mensuales por categoría
+/racha - ver sus días seguidos registrando
 /help - ver categorías y ayuda"""
 
 
@@ -186,7 +187,8 @@ Comandos:
 /exportar - descargar un CSV con todo su historial (respaldo manual)
 /deshacer - revierte el último gasto/ingreso, por si algo se registró mal
 /presupuesto <categoría> <monto en Bs> - fija un tope mensual; sin argumentos, lo lista
-  (le aviso en la confirmación del gasto si va llegando al 80% o ya lo superó)"""
+  (le aviso en la confirmación del gasto si va llegando al 80% o ya lo superó)
+/racha - sus días seguidos registrando (también sale dentro de /saldo)"""
     await _reply(update, help_message)
 
 
@@ -524,6 +526,21 @@ async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await _reply(update, f"🐊 Listo, ya no tiene un límite fijado para {categoria}.")
     else:
         await _reply(update, f"🐊 Anotado: {categoria} tiene un tope de {monto:,.2f} Bs al mes. Le avisaré si se acerca.")
+
+
+async def racha_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra la racha de días consecutivos registrando movimientos (hasta
+    ahora solo visible dentro de /saldo)."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    racha = db.get_current_streak(perfil)
+    if racha <= 0:
+        await _reply(update, "🐊 Todavía no tiene una racha activa -- hoy es un buen día para empezar una.")
+        return
+    dia_str = "día" if racha == 1 else "días"
+    await _reply(update, f"🔥 Lleva {racha} {dia_str} seguido{'s' if racha != 1 else ''} registrando con Coco. Así se hace.")
 
 
 # ---------------------------------------------------------------------- #
