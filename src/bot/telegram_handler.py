@@ -89,14 +89,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def _welcome_text(nuevo_registro: bool = False) -> str:
     intro = (
-        "¡Hola! 👋 Te acabo de registrar con tu propio perfil, separado del de "
-        "cualquier otra persona que me escriba -- tus saldos y gastos son solo "
-        "tuyos.\n\n"
-        if nuevo_registro else "¡Hola! 👋\n\n"
+        "🐊 Un gusto. Acabo de abrirle su propio libro de cuentas, separado del "
+        "de cualquier otra persona que me escriba -- lo que usted me confíe "
+        "aquí es solo suyo.\n\n"
+        if nuevo_registro else "🐊 Buenas. Aquí su banquero de confianza, a la orden.\n\n"
     )
-    return intro + """Soy tu bot de finanzas personales. Envíame tus gastos, ingresos o saldos en
-lenguaje natural (texto, foto de una captura, o nota de voz) y los voy a
-registrar.
+    return intro + """Cuénteme sus gastos, ingresos o saldos como se los diría a un amigo --
+texto, foto de una captura, o nota de voz -- y yo se los anoto.
 
 📝 Ejemplos de gasto/ingreso:
 • "Compré pan por 500" (Bs por defecto)
@@ -104,25 +103,25 @@ registrar.
 • "Pagué 3000 pesos por un almuerzo"
 • "Me pagaron el sueldo, 50000"
 
-💰 Ejemplos para declarar cuánto tienes (sin que sea un gasto/ingreso nuevo):
+💰 Ejemplos para declararme cuánto tiene (sin que sea un gasto/ingreso nuevo):
 • "Tengo 50 dólares en efectivo"
 • "En Binance tengo 200"
 • "Me quedan 300 mil bolívares en el BDV"
 
-🔄 Ejemplos para mover dinero entre tus propias billeteras (no es gasto ni ingreso):
+🔄 Ejemplos para mover dinero entre sus propias billeteras (no es gasto ni ingreso):
 • "Moví 50 dólares de Binance a efectivo"
 • "Cambié 20 dólares por 3600 pesos y los metí en efectivo"
-• "Cambié 100 mil bolívares a dólares en Binance, a 190 el cambio" (le dices la tasa
-  y yo calculo cuánto entra)
+• "Cambié 100 mil bolívares a dólares en Binance, a 190 el cambio" (me dice la tasa
+  y yo le calculo cuánto entra)
 
-También puedes enviarme:
+También puede enviarme:
 📸 Una captura de una transferencia -> la registro como gasto/ingreso
-📸 Una captura de tu saldo (BDV o Binance) -> actualizo esa billetera directo
+📸 Una captura de su saldo (BDV o Binance) -> actualizo esa billetera directo
 🎤 Una nota de voz describiendo el gasto o el saldo
 
 Comandos:
 /menu - botones rápidos (saldo, resumen, cambio, ayuda)
-/saldo - ver tu saldo (BDV, Binance, y Efectivo con USD + COP juntos)
+/saldo - ver su saldo (BDV, Binance, y Efectivo con USD + COP juntos)
 /resumen - ver gastos del mes por categoría (con porcentajes)
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
 /cambio - ver tasas BCV y Binance
@@ -151,32 +150,32 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     categories = context.bot_data.get('categories', [])
     categories_str = '\n• '.join(categories)
-    help_message = f"""ℹ️ Ayuda - Bot de Gastos
+    help_message = f"""🐊 Ayuda -- lo que este banquero sabe hacer
 
 📂 Categorías fijas de gasto:
 • {categories_str}
 
-(También puedo crear categorías nuevas automáticamente si el gasto no encaja en ninguna,
+(También puedo abrir categorías nuevas solo si el gasto no encaja en ninguna,
 ej: "Gasto de Gio", "Comida en la calle".)
 
-👛 Billeteras que manejo:
-• BDV (Bs) — tu cuenta bancaria en bolívares
-• Binance (USD) — tus dólares digitales/USDT
+👛 Billeteras que administro por usted:
+• BDV (Bs) — su cuenta bancaria en bolívares
+• Binance (USD) — sus dólares digitales/USDT
 • Efectivo — dólares y pesos (COP) en cash, juntos en /saldo con el
   equivalente combinado en cada moneda (tasa fija: {fx.COP_PER_USD:,.0f} COP = 1 USD)
 
-📝 Cómo usar:
-Envía un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
+📝 Cómo usarme:
+Envíeme un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
 • "Compré X por Y" / "Gasté Z en [categoría]" / "Cobré Z de [fuente]"
-• "Tengo Z dólares en efectivo" / "En Binance tengo Z" -> actualiza esa billetera directo
+• "Tengo Z dólares en efectivo" / "En Binance tengo Z" -> actualizo esa billetera directo
 • "Moví Z de Binance a efectivo" / "Cambié Z dólares por W pesos" -> transferencia entre
-  tus propias billeteras (no cuenta como gasto ni ingreso en /resumen)
-Si no mencionas moneda, asumo Bs. Puedes decir "20 dólares" o "3000 pesos" para USD/COP.
-En USD, si no mencionas Binance/USDT/cripto, asumo que es Efectivo.
+  sus propias billeteras (no cuenta como gasto ni ingreso en /resumen)
+Si no menciona moneda, asumo Bs. Puede decir "20 dólares" o "3000 pesos" para USD/COP.
+En USD, si no menciona Binance/USDT/cripto, asumo que es Efectivo.
 
 Comandos:
 /menu - botones rápidos (saldo, resumen, cambio, ayuda), también escribiendo "menu"
-/saldo - tu saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de tus Bs
+/saldo - su saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de sus Bs
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
@@ -216,7 +215,7 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         usd_efectivo = wallets.get(('USD', 'Efectivo'), 0.0)
         cop_efectivo = wallets.get(('COP', 'Efectivo'), 0.0)
 
-        lines = ["💰 Tu saldo actual:\n"]
+        lines = ["💰 Su saldo actual:\n"]
         lines.append(f"{CUENTA_EMOJI['BDV']} BDV (Bs): {bs_bdv:,.2f}")
         if bcv:
             lines.append(f"   ↳ ≈ $ {bs_bdv / bcv:,.2f} a tasa BCV")
@@ -230,8 +229,8 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append(f"{CUENTA_EMOJI['Efectivo']} Efectivo:")
         lines.append(f"   ↳ $ {usd_efectivo:,.2f} dólares")
         lines.append(f"   ↳ $ {cop_efectivo:,.2f} pesos (COP)")
-        lines.append(f"   ↳ Junto: $ {efectivo_total_usd:,.2f} si lo pasas todo a dólares")
-        lines.append(f"   ↳ Junto: $ {efectivo_total_cop:,.2f} si lo pasas todo a pesos")
+        lines.append(f"   ↳ Junto: $ {efectivo_total_usd:,.2f} si lo pasa todo a dólares")
+        lines.append(f"   ↳ Junto: $ {efectivo_total_cop:,.2f} si lo pasa todo a pesos")
 
         if binance:
             total_usd = (bs_bdv / binance) + usd_binance + efectivo_total_usd
@@ -278,7 +277,7 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
         moneda_map = {"BS": "Bs", "USD": "USD", "COP": "COP"}
         moneda = moneda_map.get(moneda_arg)
         if not moneda:
-            await update.message.reply_text("❌ Moneda inválida. Usa Bs, USD o COP.")
+            await update.message.reply_text("❌ Moneda inválida. Use Bs, USD o COP.")
             return
 
     cuenta = None
@@ -287,11 +286,11 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
         cuenta_map = {"bdv": "BDV", "binance": "Binance", "efectivo": "Efectivo"}
         cuenta = cuenta_map.get(cuenta_arg.lower())
         if not cuenta:
-            await update.message.reply_text("❌ Cuenta inválida. Usa BDV, Binance o Efectivo.")
+            await update.message.reply_text("❌ Cuenta inválida. Use BDV, Binance o Efectivo.")
             return
     elif moneda == 'USD':
         await update.message.reply_text(
-            "❌ Para USD tienes que indicar la cuenta:\n"
+            "❌ Para USD necesito que indique la cuenta:\n"
             "/saldo_inicial <monto> USD Binance\n"
             "/saldo_inicial <monto> USD Efectivo"
         )
@@ -323,7 +322,7 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             year, month = map(int, args[0].split('-'))
         except ValueError:
-            await _reply(update, "Formato inválido. Usa /resumen YYYY-MM, ej: /resumen 2026-06")
+            await _reply(update, "Formato inválido. Use /resumen YYYY-MM, ej: /resumen 2026-06")
             return
     else:
         now = datetime.now()
@@ -516,7 +515,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
         is_valid, error_message = validate_expense_data(expense_data, categories)
         if not is_valid:
             await update.message.reply_text(
-                f"❌ {error_message}\n\n💡 Intenta reformular con monto y categoría claros."
+                f"❌ {error_message}\n\n💡 Intente reformular con monto y categoría claros."
             )
             return
 
@@ -527,12 +526,12 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
         await _save_and_confirm(expense_data, user_id, perfil, db, update, fuente='texto')
 
     except (GeminiConnectionError,):
-        await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
         logger.error("Error de conexión con Gemini")
 
     except (GeminiInvalidJSONError,):
         await update.message.reply_text(
-            "❌ No pude entender tu mensaje.\n\n💡 Intenta ser más específico:\n"
+            "❌ No pude entender su mensaje.\n\n💡 Sea un poco más específico:\n"
             "• 'Compré [cosa] por $[monto]'\n• 'Gasté [monto] en [categoría]'\n• 'Tengo [monto] en efectivo'"
         )
         logger.error("JSON inválido desde Gemini")
@@ -542,7 +541,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
         logger.error(f"Error de storage: {e}")
 
     except Exception as e:
-        await update.message.reply_text("❌ Ocurrió un error inesperado. Intenta nuevamente.")
+        await update.message.reply_text("❌ Ocurrió un error inesperado. Intente nuevamente.")
         logger.exception(f"Error inesperado: {e}")
 
 
@@ -604,7 +603,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _save_and_confirm(data, user_id, perfil, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
 
     except (GeminiConnectionError,):
-        await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
         logger.error("Error de conexión con Gemini (imagen)")
     except (GeminiInvalidJSONError,):
         await update.message.reply_text("❌ No pude interpretar la captura de pantalla.")
@@ -662,11 +661,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _save_and_confirm(data, user_id, perfil, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
 
     except (GeminiConnectionError,):
-        await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
         logger.error("Error de conexión con Gemini (audio)")
     except (GeminiInvalidJSONError,):
         await update.message.reply_text(
-            "❌ No pude entender tu nota de voz. Intenta hablar más claro o describir monto y categoría."
+            "❌ No pude entender su nota de voz. Intente hablar más claro o describir monto y categoría."
         )
         logger.error("JSON inválido desde Gemini (audio)")
     except StorageError as e:

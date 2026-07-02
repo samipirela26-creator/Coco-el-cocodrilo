@@ -88,7 +88,7 @@ async def send_weekly_report(context) -> None:
                 await context.bot.send_photo(
                     chat_id=user_id,
                     photo=io.BytesIO(image_bytes),
-                    caption="📊 Tu resumen semanal de gastos"
+                    caption="📊 Su resumen semanal de gastos"
                 )
             except Exception as e:
                 logger.error(f"No se pudo enviar el reporte semanal a {user_id} ({perfil}): {e}")
