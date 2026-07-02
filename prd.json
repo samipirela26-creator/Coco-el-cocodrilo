@@ -29,7 +29,7 @@
       "priority": 4,
       "title": "Aviso de variacion relevante en la tasa de cambio",
       "description": "Al consultar /cambio o /saldo, si la tasa BCV o Binance actual difiere mas de 3% respecto al ultimo valor cacheado en fx_rates, agregar una linea breve indicando la variacion (subio/bajo X%). No requiere jobs nuevos, se calcula al vuelo comparando con el valor cacheado previo antes de sobrescribirlo.",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",

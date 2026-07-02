@@ -190,10 +190,27 @@ Comandos:
     await _reply(update, help_message)
 
 
-def _format_rates_block(bcv: float, binance: float) -> str:
+def _rate_variation_pct(rate: float, previous: float) -> float:
+    """None si no hay valor previo para comparar (cache vigente, o primera
+    vez) o si el previo es 0 (evita división entre cero)."""
+    if previous is None or previous == 0:
+        return None
+    return (rate - previous) / previous * 100
+
+
+def _variation_note(pct: float) -> str:
+    """Solo avisa si el movimiento es relevante (>=3%) -- para no hacer ruido
+    con variaciones normales del día a día."""
+    if pct is None or abs(pct) < 3:
+        return ""
+    flecha = "🔺" if pct > 0 else "🔻"
+    return f" ({flecha} {abs(pct):.1f}% desde la última consulta)"
+
+
+def _format_rates_block(bcv: float, binance: float, bcv_var: float = None, binance_var: float = None) -> str:
     return (
-        f"🏦 BCV: {bcv:,.2f} Bs/USD\n"
-        f"💵 Binance: {binance:,.2f} Bs/USD\n"
+        f"🏦 BCV: {bcv:,.2f} Bs/USD{_variation_note(bcv_var)}\n"
+        f"💵 Binance: {binance:,.2f} Bs/USD{_variation_note(binance_var)}\n"
         f"🌎 USD -> COP: {fx.COP_PER_USD:,.0f} (tasa fija)"
     )
 
@@ -202,9 +219,11 @@ async def cambio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_allowed(update, context):
         return
     db: DBClient = context.bot_data['db']
-    bcv = fx.get_bcv_rate(db)
-    binance = fx.get_binance_rate(db)
-    await _reply(update, f"💱 Tasas actuales\n\n{_format_rates_block(bcv, binance)}")
+    bcv, bcv_prev = fx.get_bcv_rate_with_variation(db)
+    binance, binance_prev = fx.get_binance_rate_with_variation(db)
+    bcv_var = _rate_variation_pct(bcv, bcv_prev)
+    binance_var = _rate_variation_pct(binance, binance_prev)
+    await _reply(update, f"💱 Tasas actuales\n\n{_format_rates_block(bcv, binance, bcv_var, binance_var)}")
 
 
 async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -214,8 +233,10 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     perfil = _perfil_de(update.effective_user.id, context)
     try:
         wallets = {(w['moneda'], w['cuenta']): w['balance'] for w in db.get_all_wallets(perfil)}
-        bcv = fx.get_bcv_rate(db)
-        binance = fx.get_binance_rate(db)
+        bcv, bcv_prev = fx.get_bcv_rate_with_variation(db)
+        binance, binance_prev = fx.get_binance_rate_with_variation(db)
+        bcv_var = _rate_variation_pct(bcv, bcv_prev)
+        binance_var = _rate_variation_pct(binance, binance_prev)
 
         bs_bdv = wallets.get(('Bs', 'BDV'), 0.0)
         usd_binance = wallets.get(('USD', 'Binance'), 0.0)
@@ -250,7 +271,7 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             lines.append(f"🔥 Racha: {racha} día{'s' if racha != 1 else ''} seguido{'s' if racha != 1 else ''} registrando")
 
         lines.append("")
-        lines.append(_format_rates_block(bcv, binance))
+        lines.append(_format_rates_block(bcv, binance, bcv_var, binance_var))
 
         await _reply(update, '\n'.join(lines))
     except StorageError as e:

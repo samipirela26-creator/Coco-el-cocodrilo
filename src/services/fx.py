@@ -43,31 +43,41 @@ def _fetch_rate_from_api(page: str) -> float:
     raise ValueError(f"No se pudo extraer la tasa de la respuesta: {data}")
 
 
-def _get_rate(db, page: str, cache_key: str) -> float:
+def _get_rate_full(db, page: str, cache_key: str) -> tuple:
     """Obtiene una tasa con cache de 1h en la tabla fx_rates. Nunca lanza
     excepción: si todo falla, retorna el fallback (o el último cache aunque
-    esté vencido, si existe)."""
+    esté vencido, si existe).
+
+    Retorna (rate, previous_rate_or_None) -- `previous_rate` es el valor que
+    HABÍA en cache justo antes de refrescarlo con uno nuevo (para poder avisar
+    de variaciones), y es None si no hubo una tasa nueva de por medio (cache
+    todavía vigente, o no había nada cacheado antes)."""
     cached_rate, fetched_at = db.get_cached_fx_rate(cache_key)
 
     if cached_rate is not None and fetched_at:
         try:
             fetched_dt = datetime.fromisoformat(fetched_at)
             if datetime.now() - fetched_dt < timedelta(minutes=CACHE_TTL_MINUTES):
-                return cached_rate
+                return cached_rate, None
         except ValueError:
             pass
 
     try:
         rate = _fetch_rate_from_api(page)
         db.set_cached_fx_rate(cache_key, rate)
-        return rate
+        return rate, cached_rate
     except Exception as e:
         logger.warning(f"No se pudo obtener tasa '{page}' desde la API: {e}")
         if cached_rate is not None:
             logger.info(f"Usando última tasa cacheada para '{page}': {cached_rate}")
-            return cached_rate
+            return cached_rate, None
         logger.warning(f"Sin cache disponible para '{page}', usando fallback {FALLBACK_RATE}")
-        return FALLBACK_RATE
+        return FALLBACK_RATE, None
+
+
+def _get_rate(db, page: str, cache_key: str) -> float:
+    rate, _ = _get_rate_full(db, page, cache_key)
+    return rate
 
 
 def get_bcv_rate(db) -> float:
@@ -78,6 +88,17 @@ def get_bcv_rate(db) -> float:
 def get_binance_rate(db) -> float:
     """Tasa paralelo/Binance (Bs por USD)."""
     return _get_rate(db, page="enparalelovzla", cache_key="binance")
+
+
+def get_bcv_rate_with_variation(db) -> tuple:
+    """Como get_bcv_rate, pero retorna (rate, previous_rate_or_None) para
+    poder avisar si la tasa se movió bastante desde la última vez consultada."""
+    return _get_rate_full(db, page="bcv", cache_key="bcv")
+
+
+def get_binance_rate_with_variation(db) -> tuple:
+    """Como get_binance_rate, pero retorna (rate, previous_rate_or_None)."""
+    return _get_rate_full(db, page="enparalelovzla", cache_key="binance")
 
 
 def get_all_rates(db) -> dict:

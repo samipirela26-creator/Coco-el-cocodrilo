@@ -35,3 +35,12 @@
   - `ON CONFLICT(perfil, categoria) DO UPDATE` (upsert) es el patron a usar para tablas con PK compuesta (perfil, algo_mas) que se "fijan"/reemplazan en vez de acumularse -- mismo espiritu que wallets.
   - Testeado con DB en memoria: 420/500 -> 84% (aviso "va en 84%"), 620/500 -> 124% (aviso "ya superó"), categoria sin presupuesto -> None (sin aviso), set_budget con monto 0 elimina la fila, aislamiento por perfil verificado.
 ---
+
+## [2026-07-02] - US-004
+- Agregado aviso de variación relevante (>=3%) en la tasa BCV/Binance al consultar /cambio o /saldo. Se calcula al vuelo: cada vez que el cache de 1h vence y se refresca con un valor nuevo desde la API, se compara contra el valor que HABÍA en cache justo antes de sobrescribirlo. Si el cache sigue vigente (no hubo fetch nuevo), no hay variación que mostrar (no se inventa comparando contra algo mas viejo).
+- Files changed: src/services/fx.py (`_get_rate_full` retorna `(rate, previous_or_None)`; `_get_rate` ahora es un wrapper que descarta el previo, sin romper a nadie que ya llamaba `get_bcv_rate`/`get_binance_rate`; nuevas `get_bcv_rate_with_variation`/`get_binance_rate_with_variation`), src/bot/telegram_handler.py (`_rate_variation_pct`, `_variation_note`, `_format_rates_block` ahora acepta `bcv_var`/`binance_var` opcionales; `cambio_command` y `saldo_command` usan las nuevas funciones *_with_variation; `resumen_command` se dejó SIN cambios, usa `get_bcv_rate`/`get_binance_rate` planas a propósito, ver abajo).
+- **Learnings for future iterations:**
+  - Alcance a propósito: solo /cambio y /saldo muestran variación (son las consultas "¿cómo está la tasa ahora?"). /resumen muestra las tasas solo como referencia de cierre de mes, no tiene sentido ahí y se dejó tal cual para no ensuciar ese mensaje.
+  - Para testear esto sin llamar la API real: `db._conn.execute("UPDATE fx_rates SET fetched_at = '2000-01-01T00:00:00' WHERE page=?", (cache_key,))` fuerza que el cache se vea vencido, y luego se puede monkeypatchear `fx._fetch_rate_from_api = lambda page: <valor>` para controlar qué "nueva" tasa llega.
+  - El umbral de 3% y el emoji 🔺/🔻 están en `_variation_note` (telegram_handler.py) -- si se quiere ajustar la sensibilidad del aviso, es el único lugar a tocar.
+---
