@@ -12,12 +12,12 @@ from src.utils.logger import setup_logger
 from src.llm.gemini_client import GeminiClient
 from src.storage.db import DBClient
 from src.reports.weekly_image import render_weekly_report
-from src.bot.telegram_handler import (
+from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
     presupuesto_command, racha_command, menu_command, menu_callback,
-    handle_message, handle_photo, handle_voice, error_handler,
 )
+from src.bot.handlers import handle_message, handle_photo, handle_voice, error_handler
 
 logger = None
 

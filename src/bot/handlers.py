@@ -1,0 +1,275 @@
+"""Manejadores de entrada libre del bot: mensajes de texto, fotos (capturas
+de saldo/transferencia) y notas de voz. Comparten el guardado/confirmación
+vía `_save_and_confirm`.
+"""
+import logging
+from telegram import Update
+from telegram.ext import ContextTypes
+from src.llm.prompt_builder import build_prompt
+from src.llm.base import LLMConnector
+from src.storage.db import DBClient
+from src.utils.validators import validate_expense_data
+from src.utils.exceptions import (
+    GeminiConnectionError,
+    GeminiInvalidJSONError,
+    StorageError,
+)
+from src.bot.access import _is_allowed, _perfil_de
+from src.bot.formatters import format_confirmation_message, format_ajuste_message, format_transferencia_message
+from src.bot.commands import menu_command, _maybe_welcome_new_profile
+
+logger = logging.getLogger('gastos-bot')
+
+
+async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient, update: Update,
+                             prefix: str = "", fuente: str = 'texto') -> None:
+    """Guarda una transacción (gasto/ingreso), un ajuste de saldo, o una
+    transferencia entre billeteras propias ya parseada y validada, en los
+    datos DE ESTE PERFIL (aislados de cualquier otro), y responde con la
+    confirmación correspondiente. Compartido por texto, voz y fotos de
+    transferencia (a un tercero -- distinto de "transferencia" tipo, que es
+    entre billeteras propias)."""
+    moneda = data.get('moneda', 'Bs')
+
+    if data['tipo'] == 'ajuste_saldo':
+        cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), data['monto'], fuente=fuente)
+        mensaje = format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'], data.get('respuesta'))
+        await update.message.reply_text(f"{prefix}{mensaje}")
+        return
+
+    if data['tipo'] == 'transferencia':
+        resultado = db.transfer(
+            perfil=perfil,
+            moneda_origen=data['moneda_origen'],
+            cuenta_origen=data.get('cuenta_origen'),
+            monto_origen=float(data['monto_origen']),
+            moneda_destino=data['moneda_destino'],
+            cuenta_destino=data.get('cuenta_destino'),
+            monto_destino=float(data['monto_destino']),
+            fuente=fuente,
+        )
+        mensaje = format_transferencia_message(resultado, data.get('respuesta'), data.get('tasa_cambio'))
+        await update.message.reply_text(f"{prefix}{mensaje}")
+        return
+
+    cuenta_resuelta = db.append_expense(
+        perfil=perfil,
+        tipo=data['tipo'],
+        fecha=data['fecha'],
+        descripcion=data['descripcion'],
+        categoria=data['categoria'],
+        monto=data['monto'],
+        user_id=user_id,
+        moneda=moneda,
+        cuenta=data.get('cuenta'),
+    )
+    balance = db.get_wallet_balance(perfil, moneda, cuenta_resuelta)
+    budget_status = None
+    if data['tipo'] == 'gasto' and moneda == 'Bs':
+        budget_status = db.get_budget_status(perfil, data['categoria'], data['fecha'])
+    confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta, budget_status)
+    await update.message.reply_text(f"{prefix}{confirmation_message}")
+
+
+# ---------------------------------------------------------------------- #
+# Mensajes de texto
+# ---------------------------------------------------------------------- #
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update, context):
+        return
+    message = update.message
+    if not message.text:
+        return
+    await handle_text_message(message.text, update, context)
+
+
+async def handle_text_message(user_message: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar/ajustar saldo 5) confirmar.
+    """
+    if user_message.strip().lower() in ("menu", "menú", "m"):
+        await menu_command(update, context)
+        return
+
+    user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
+    llm_connector: LLMConnector = context.bot_data['llm_connector']
+    db: DBClient = context.bot_data['db']
+    categories = context.bot_data['categories']
+
+    try:
+        await update.message.chat.send_action(action="typing")
+
+        dynamic_categories = db.get_dynamic_categories(perfil)
+        prompt = build_prompt(user_message, categories, dynamic_categories)
+        expense_data = llm_connector.generate(prompt)
+        logger.debug(f"Datos extraídos: {expense_data}")
+
+        is_valid, error_message = validate_expense_data(expense_data, categories)
+        if not is_valid:
+            await update.message.reply_text(
+                f"❌ {error_message}\n\n💡 Intente reformular con monto y categoría claros."
+            )
+            return
+
+        if expense_data.get('tipo') == 'charla':
+            await update.message.reply_text(expense_data.get('respuesta') or "🐊 ¿En qué le ayudo?")
+            return
+
+        await _save_and_confirm(expense_data, user_id, perfil, db, update, fuente='texto')
+
+    except (GeminiConnectionError,):
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
+        logger.error("Error de conexión con Gemini")
+
+    except (GeminiInvalidJSONError,):
+        await update.message.reply_text(
+            "❌ No pude entender su mensaje.\n\n💡 Sea un poco más específico:\n"
+            "• 'Compré [cosa] por $[monto]'\n• 'Gasté [monto] en [categoría]'\n• 'Tengo [monto] en efectivo'"
+        )
+        logger.error("JSON inválido desde Gemini")
+
+    except StorageError as e:
+        await update.message.reply_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+        logger.error(f"Error de storage: {e}")
+
+    except Exception as e:
+        await update.message.reply_text("❌ Ocurrió un error inesperado. Intente nuevamente.")
+        logger.exception(f"Error inesperado: {e}")
+
+
+# ---------------------------------------------------------------------- #
+# Fotos / capturas de pantalla
+# ---------------------------------------------------------------------- #
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Descarga la foto de mayor resolución, la analiza con Gemini Vision y
+    decide el flujo según 'captura_tipo':
+      - "transferencia": registra un gasto/ingreso.
+      - "saldo": ADOPTA directo el saldo leído como la billetera correspondiente
+        (BDV si es Bs, Binance/Efectivo si es USD según la app detectada) --
+        sin pedir confirmación, pero mostrando antes/después para que el
+        usuario note al toque si el OCR leyó mal algo (ver db.set_wallet_balance).
+    """
+    if not _is_allowed(update, context):
+        return
+
+    user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
+    llm_connector = context.bot_data['llm_connector']
+    db: DBClient = context.bot_data['db']
+    categories = context.bot_data['categories']
+
+    try:
+        await update.message.chat.send_action(action="typing")
+
+        photo = update.message.photo[-1]  # mayor resolución
+        photo_file = await photo.get_file()
+        image_bytes = bytes(await photo_file.download_as_bytearray())
+
+        dynamic_categories = db.get_dynamic_categories(perfil)
+        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories)
+        logger.debug(f"Datos extraídos de la imagen: {data}")
+
+        captura_tipo = data.get('captura_tipo')
+        moneda = data.get('moneda', 'Bs')
+
+        if captura_tipo == 'saldo':
+            monto_banco = float(data.get('monto', 0))
+            cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), monto_banco, fuente='foto')
+            await update.message.reply_text(
+                f"📸 Detecté una captura de saldo.\n\n"
+                f"{format_ajuste_message(moneda, cuenta_resuelta, anterior, monto_banco)}"
+            )
+            return
+
+        # captura_tipo == "transferencia" (o desconocido -> tratamos como transferencia)
+        is_valid, error_message = validate_expense_data(data, categories)
+        if not is_valid:
+            await update.message.reply_text(
+                f"❌ No pude interpretar la captura correctamente: {error_message}"
+            )
+            return
+
+        await _save_and_confirm(data, user_id, perfil, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
+
+    except (GeminiConnectionError,):
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
+        logger.error("Error de conexión con Gemini (imagen)")
+    except (GeminiInvalidJSONError,):
+        await update.message.reply_text("❌ No pude interpretar la captura de pantalla.")
+        logger.error("JSON inválido desde Gemini (imagen)")
+    except StorageError as e:
+        await update.message.reply_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+        logger.error(f"Error de storage (imagen): {e}")
+    except Exception as e:
+        await update.message.reply_text("❌ Ocurrió un error inesperado al procesar la imagen.")
+        logger.exception(f"Error inesperado (imagen): {e}")
+
+
+# ---------------------------------------------------------------------- #
+# Notas de voz
+# ---------------------------------------------------------------------- #
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Descarga la nota de voz (.ogg/opus), la transcribe y parsea en un solo
+    paso vía Gemini, y guarda igual que el flujo de texto (gasto/ingreso o
+    ajuste de saldo).
+    """
+    if not _is_allowed(update, context):
+        return
+
+    user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
+    llm_connector = context.bot_data['llm_connector']
+    db: DBClient = context.bot_data['db']
+    categories = context.bot_data['categories']
+
+    try:
+        await update.message.chat.send_action(action="typing")
+
+        voice = update.message.voice
+        voice_file = await voice.get_file()
+        audio_bytes = bytes(await voice_file.download_as_bytearray())
+
+        dynamic_categories = db.get_dynamic_categories(perfil)
+        data = llm_connector.transcribe_and_parse_audio(audio_bytes, categories, dynamic_categories)
+        logger.debug(f"Datos extraídos del audio: {data}")
+
+        is_valid, error_message = validate_expense_data(data, categories)
+        if not is_valid:
+            await update.message.reply_text(
+                f"❌ No pude entender la nota de voz: {error_message}"
+            )
+            return
+
+        if data.get('tipo') == 'charla':
+            await update.message.reply_text(data.get('respuesta') or "🐊 ¿En qué le ayudo?")
+            return
+
+        await _save_and_confirm(data, user_id, perfil, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
+
+    except (GeminiConnectionError,):
+        await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
+        logger.error("Error de conexión con Gemini (audio)")
+    except (GeminiInvalidJSONError,):
+        await update.message.reply_text(
+            "❌ No pude entender su nota de voz. Intente hablar más claro o describir monto y categoría."
+        )
+        logger.error("JSON inválido desde Gemini (audio)")
+    except StorageError as e:
+        await update.message.reply_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+        logger.error(f"Error de storage (audio): {e}")
+    except Exception as e:
+        await update.message.reply_text("❌ Ocurrió un error inesperado al procesar la nota de voz.")
+        logger.exception(f"Error inesperado (audio): {e}")
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Excepción no manejada capturada por el manejador global:", exc_info=context.error)
