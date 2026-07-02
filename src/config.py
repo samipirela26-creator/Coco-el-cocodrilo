@@ -44,6 +44,33 @@ class Config:
             int(uid.strip()) for uid in allowed_ids_str.split(',') if uid.strip()
         ]
 
+        # Perfiles: agrupa varias cuentas de Telegram bajo un mismo "perfil"
+        # (comparten saldos/gastos/racha, ej. dos cuentas de la misma persona).
+        # Formato: "nombre:id1|id2,otro_nombre:id3". Cualquier ID permitido
+        # que NO aparezca en ningún grupo es su propio perfil aislado por
+        # defecto (nadie más ve sus datos) -- así, por defecto, cada amigo
+        # que agregues a ALLOWED_USER_IDS queda separado sin configurar nada más.
+        profiles_str = os.getenv('USER_PROFILES', '')
+        self.user_id_to_profile = {}
+        self.profile_to_user_ids = {}
+        for grupo in profiles_str.split(','):
+            grupo = grupo.strip()
+            if not grupo or ':' not in grupo:
+                continue
+            nombre, ids_str = grupo.split(':', 1)
+            nombre = nombre.strip()
+            if not nombre:
+                continue
+            ids = [int(i.strip()) for i in ids_str.split('|') if i.strip()]
+            self.profile_to_user_ids[nombre] = ids
+            for uid in ids:
+                self.user_id_to_profile[uid] = nombre
+        for uid in self.allowed_user_ids:
+            if uid not in self.user_id_to_profile:
+                nombre = str(uid)
+                self.user_id_to_profile[uid] = nombre
+                self.profile_to_user_ids.setdefault(nombre, []).append(uid)
+
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
         self.log_dir = os.getenv('LOG_DIR', 'logs')
 

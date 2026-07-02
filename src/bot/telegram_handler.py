@@ -36,6 +36,15 @@ def _is_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return False
 
 
+def _perfil_de(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Resuelve a qué 'perfil' (persona) pertenece este user_id de Telegram --
+    cada perfil tiene sus propios saldos/gastos/racha, totalmente aislados de
+    los demás (ver src/config.py: USER_PROFILES). Si el user_id no está
+    agrupado explícitamente, es su propio perfil aislado por defecto."""
+    mapping = context.bot_data.get('user_id_to_profile') or {}
+    return mapping.get(user_id, str(user_id))
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
@@ -55,6 +64,12 @@ registrar.
 • "Tengo 50 dólares en efectivo"
 • "En Binance tengo 200"
 • "Me quedan 300 mil bolívares en el BDV"
+
+🔄 Ejemplos para mover dinero entre tus propias billeteras (no es gasto ni ingreso):
+• "Moví 50 dólares de Binance a efectivo"
+• "Cambié 20 dólares por 3600 pesos y los metí en efectivo"
+• "Cambié 100 mil bolívares a dólares en Binance, a 190 el cambio" (le dices la tasa
+  y yo calculo cuánto entra)
 
 También puedes enviarme:
 📸 Una captura de una transferencia -> la registro como gasto/ingreso
@@ -93,6 +108,8 @@ ej: "Gasto de Gio", "Comida en la calle".)
 Envía un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
 • "Compré X por Y" / "Gasté Z en [categoría]" / "Cobré Z de [fuente]"
 • "Tengo Z dólares en efectivo" / "En Binance tengo Z" -> actualiza esa billetera directo
+• "Moví Z de Binance a efectivo" / "Cambié Z dólares por W pesos" -> transferencia entre
+  tus propias billeteras (no cuenta como gasto ni ingreso en /resumen)
 Si no mencionas moneda, asumo Bs. Puedes decir "20 dólares" o "3000 pesos" para USD/COP.
 En USD, si no mencionas Binance/USDT/cripto, asumo que es Efectivo.
 
@@ -126,8 +143,9 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _is_allowed(update, context):
         return
     db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
     try:
-        wallets = {(w['moneda'], w['cuenta']): w['balance'] for w in db.get_all_wallets()}
+        wallets = {(w['moneda'], w['cuenta']): w['balance'] for w in db.get_all_wallets(perfil)}
         bcv = fx.get_bcv_rate(db)
         binance = fx.get_binance_rate(db)
 
@@ -158,7 +176,7 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             lines.append("")
             lines.append(f"🌎 Total aprox. en USD (BDV a tasa Binance + Binance + Efectivo): $ {total_usd:,.2f}")
 
-        racha = db.get_current_streak()
+        racha = db.get_current_streak(perfil)
         if racha > 0:
             lines.append("")
             lines.append(f"🔥 Racha: {racha} día{'s' if racha != 1 else ''} seguido{'s' if racha != 1 else ''} registrando")
@@ -175,6 +193,7 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not _is_allowed(update, context):
         return
     db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
     args = context.args
     if not args:
         await update.message.reply_text(
@@ -217,7 +236,7 @@ async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     try:
-        cuenta_resuelta, anterior = db.set_wallet_balance(moneda, cuenta, monto, fuente='comando')
+        cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, cuenta, monto, fuente='comando')
     except StorageError as e:
         await update.message.reply_text(f"❌ Error al actualizar el saldo: {e}")
         return
@@ -233,6 +252,7 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _is_allowed(update, context):
         return
     db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
     from datetime import datetime
     import calendar
 
@@ -252,7 +272,7 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     fecha_hasta = f"{year:04d}-{month:02d}-{last_day:02d}"
 
     try:
-        summaries = db.get_summary(fecha_desde, fecha_hasta)  # dict por moneda
+        summaries = db.get_summary(perfil, fecha_desde, fecha_hasta)  # dict por moneda
         bcv = fx.get_bcv_rate(db)
         binance = fx.get_binance_rate(db)
     except StorageError as e:
@@ -318,20 +338,69 @@ Antes: {simbolo} {anterior:,.2f}
 Ahora: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
 
 
-async def _save_and_confirm(data: dict, user_id: int, db: DBClient, update: Update,
+def _tasa_label(moneda_origen: str, moneda_destino: str) -> str:
+    """Ej: 'Bs/USD' si el par es Bs<->USD, para que la tasa mostrada en la
+    confirmación tenga unidades claras (misma convención que /cambio: cuántos
+    Bs o COP equivalen a 1 USD)."""
+    monedas = {moneda_origen, moneda_destino}
+    if 'USD' in monedas:
+        otra = monedas - {'USD'}
+        if otra:
+            return f"{next(iter(otra))}/USD"
+    return ""
+
+
+def format_transferencia_message(resultado: dict, respuesta: str = "", tasa_cambio: float = None) -> str:
+    simbolo_o = MONEDA_SIMBOLO.get(resultado['moneda_origen'], '')
+    simbolo_d = MONEDA_SIMBOLO.get(resultado['moneda_destino'], '')
+    tasa_line = ""
+    if tasa_cambio:
+        label = _tasa_label(resultado['moneda_origen'], resultado['moneda_destino'])
+        tasa_line = f"\n💱 Tasa usada: {float(tasa_cambio):,.2f}" + (f" {label}" if label else "")
+    return f"""✅ Transferencia registrada
+
+👛 {resultado['cuenta_origen']} ({resultado['moneda_origen']})
+Antes: {simbolo_o} {resultado['anterior_origen']:,.2f}
+Ahora: {simbolo_o} {resultado['nuevo_origen']:,.2f}
+
+👛 {resultado['cuenta_destino']} ({resultado['moneda_destino']})
+Antes: {simbolo_d} {resultado['anterior_destino']:,.2f}
+Ahora: {simbolo_d} {resultado['nuevo_destino']:,.2f}{tasa_line}""" + _coco_line(respuesta)
+
+
+async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient, update: Update,
                              prefix: str = "", fuente: str = 'texto') -> None:
-    """Guarda una transacción (gasto/ingreso) o un ajuste de saldo ya parseado
-    y validado, y responde con la confirmación correspondiente. Compartido
-    por texto, voz y fotos de transferencia."""
+    """Guarda una transacción (gasto/ingreso), un ajuste de saldo, o una
+    transferencia entre billeteras propias ya parseada y validada, en los
+    datos DE ESTE PERFIL (aislados de cualquier otro), y responde con la
+    confirmación correspondiente. Compartido por texto, voz y fotos de
+    transferencia (a un tercero -- distinto de "transferencia" tipo, que es
+    entre billeteras propias)."""
     moneda = data.get('moneda', 'Bs')
 
     if data['tipo'] == 'ajuste_saldo':
-        cuenta_resuelta, anterior = db.set_wallet_balance(moneda, data.get('cuenta'), data['monto'], fuente=fuente)
+        cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), data['monto'], fuente=fuente)
         mensaje = format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'], data.get('respuesta'))
         await update.message.reply_text(f"{prefix}{mensaje}")
         return
 
+    if data['tipo'] == 'transferencia':
+        resultado = db.transfer(
+            perfil=perfil,
+            moneda_origen=data['moneda_origen'],
+            cuenta_origen=data.get('cuenta_origen'),
+            monto_origen=float(data['monto_origen']),
+            moneda_destino=data['moneda_destino'],
+            cuenta_destino=data.get('cuenta_destino'),
+            monto_destino=float(data['monto_destino']),
+            fuente=fuente,
+        )
+        mensaje = format_transferencia_message(resultado, data.get('respuesta'), data.get('tasa_cambio'))
+        await update.message.reply_text(f"{prefix}{mensaje}")
+        return
+
     cuenta_resuelta = db.append_expense(
+        perfil=perfil,
         tipo=data['tipo'],
         fecha=data['fecha'],
         descripcion=data['descripcion'],
@@ -341,7 +410,7 @@ async def _save_and_confirm(data: dict, user_id: int, db: DBClient, update: Upda
         moneda=moneda,
         cuenta=data.get('cuenta'),
     )
-    balance = db.get_wallet_balance(moneda, cuenta_resuelta)
+    balance = db.get_wallet_balance(perfil, moneda, cuenta_resuelta)
     confirmation_message = format_confirmation_message(data, balance, cuenta_resuelta)
     await update.message.reply_text(f"{prefix}{confirmation_message}")
 
@@ -364,6 +433,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar/ajustar saldo 5) confirmar.
     """
     user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
     llm_connector: LLMConnector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
@@ -371,7 +441,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     try:
         await update.message.chat.send_action(action="typing")
 
-        dynamic_categories = db.get_dynamic_categories()
+        dynamic_categories = db.get_dynamic_categories(perfil)
         prompt = build_prompt(user_message, categories, dynamic_categories)
         expense_data = llm_connector.generate(prompt)
         logger.debug(f"Datos extraídos: {expense_data}")
@@ -387,7 +457,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
             await update.message.reply_text(expense_data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
-        await _save_and_confirm(expense_data, user_id, db, update, fuente='texto')
+        await _save_and_confirm(expense_data, user_id, perfil, db, update, fuente='texto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
@@ -427,6 +497,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
     llm_connector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
@@ -438,7 +509,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         photo_file = await photo.get_file()
         image_bytes = bytes(await photo_file.download_as_bytearray())
 
-        dynamic_categories = db.get_dynamic_categories()
+        dynamic_categories = db.get_dynamic_categories(perfil)
         data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories)
         logger.debug(f"Datos extraídos de la imagen: {data}")
 
@@ -447,7 +518,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         if captura_tipo == 'saldo':
             monto_banco = float(data.get('monto', 0))
-            cuenta_resuelta, anterior = db.set_wallet_balance(moneda, data.get('cuenta'), monto_banco, fuente='foto')
+            cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), monto_banco, fuente='foto')
             await update.message.reply_text(
                 f"📸 Detecté una captura de saldo.\n\n"
                 f"{format_ajuste_message(moneda, cuenta_resuelta, anterior, monto_banco)}"
@@ -462,7 +533,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        await _save_and_confirm(data, user_id, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
+        await _save_and_confirm(data, user_id, perfil, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")
@@ -492,6 +563,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
     llm_connector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
@@ -503,7 +575,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         voice_file = await voice.get_file()
         audio_bytes = bytes(await voice_file.download_as_bytearray())
 
-        dynamic_categories = db.get_dynamic_categories()
+        dynamic_categories = db.get_dynamic_categories(perfil)
         data = llm_connector.transcribe_and_parse_audio(audio_bytes, categories, dynamic_categories)
         logger.debug(f"Datos extraídos del audio: {data}")
 
@@ -518,7 +590,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text(data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
-        await _save_and_confirm(data, user_id, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
+        await _save_and_confirm(data, user_id, perfil, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intenta más tarde.")

@@ -75,6 +75,29 @@ Reglas:
   * Si "moneda" es "USD", "cuenta" es "Binance" SOLO si el mensaje menciona explícitamente Binance,
     USDT, cripto, o "vendí/compré dólares digitales". En cualquier otro caso, usa "Efectivo"
     (los dólares en cash son el caso más común).
+- "tipo" es "transferencia" si el usuario mueve dinero ENTRE SUS PROPIAS billeteras/cuentas --
+  NO es un gasto ni un ingreso nuevo (el dinero sigue siendo suyo, solo cambia de bolsillo), ni
+  tampoco está declarando cuánto tiene (eso es "ajuste_saldo"). Ejemplos: "moví 50 dólares de
+  Binance a efectivo", "pasé 100 mil bolívares del BDV a mi efectivo", "saqué 30 dólares del
+  Binance y los tengo en cash", "cambié 20 dólares por 3600 pesos y los metí en efectivo" (esto
+  último es un cambio de divisa: origen y destino en monedas distintas).
+  * Usa los campos "moneda_origen"/"cuenta_origen"/"monto_origen" para de dónde sale el dinero,
+    y "moneda_destino"/"cuenta_destino"/"monto_destino" para a dónde entra.
+  * Si origen y destino son la MISMA moneda, "monto_destino" debe ser igual a "monto_origen".
+  * Si es un cambio de divisa (monedas distintas) y el usuario dice AMBOS montos (lo que salió y
+    lo que entró, ej. "cambié 20 dólares por 3600 pesos"), usa esos montos tal cual, aunque no
+    coincidan numéricamente entre sí -- no necesitas "tasa_cambio" en este caso.
+  * Si el usuario en cambio da una TASA en vez del segundo monto (ej. "cambié 100 mil bolívares
+    a dólares en Binance a 190", "pasé 50 dólares a bolívares al BDV, al cambio de 195"), calcula
+    tú mismo "monto_destino" usando esa tasa y déjala también en "tasa_cambio":
+    * "tasa_cambio" siempre expresa cuántos Bs (o COP) equivalen a 1 USD -- igual que las tasas
+      BCV/Binance que ya manejas en este bot.
+    * Si conviertes DE Bs/COP A USD: "monto_destino" = "monto_origen" / "tasa_cambio".
+    * Si conviertes DE USD A Bs/COP: "monto_destino" = "monto_origen" * "tasa_cambio".
+    * Si NO hay conversión de divisa (mismo par de monedas) o el usuario no mencionó ninguna tasa,
+      deja "tasa_cambio" en null.
+  * Para "transferencia" deja "monto" en 0 y "categoria" vacía (no se usan) -- usa solo los
+    campos _origen/_destino. "descripcion" sí debe llenarse con un resumen breve.
 """
 
 
@@ -107,7 +130,7 @@ montos, usa "tipo": "charla" y responde en "respuesta" como Coco lo haría (brev
 en su voz), charlando de vuelta o preguntando qué quiere registrar si viene al caso.
 Responde EXCLUSIVAMENTE con un objeto JSON.
 
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo" o "charla">, "monto": <float positivo, 0 si es charla>, "categoria": <string, vacío si es ajuste_saldo o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia" o "charla">, "monto": <float positivo, 0 si es charla o transferencia>, "categoria": <string, vacío si es ajuste_saldo, transferencia o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación
   (saludo, pregunta, comentario). "monto" va en 0, "categoria" y "descripcion" vacíos.
@@ -172,7 +195,7 @@ lo que dice, y responde EXCLUSIVAMENTE con un objeto JSON. Si NO menciona ningú
 NO inventes montos: usa "tipo": "charla" y responde en "respuesta" como Coco.
 HOY ES {today}.
 {_persona_coco()}
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo" o "charla">, "monto": <float positivo, 0 si es charla>, "categoria": <string, vacío si es ajuste_saldo o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia" o "charla">, "monto": <float positivo, 0 si es charla o transferencia>, "categoria": <string, vacío si es ajuste_saldo, transferencia o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación.
   "monto" va en 0, "categoria" y "descripcion" vacíos.

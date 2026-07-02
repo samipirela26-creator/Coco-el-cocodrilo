@@ -35,34 +35,37 @@ RECORDATORIOS_NOCTURNOS = [
 
 
 async def send_nightly_reminder(context) -> None:
-    """Job diario 22:00: si el usuario no registró nada hoy, Coco le escribe
-    un recordatorio suave (nunca si ya registró algo)."""
+    """Job diario 22:00: por cada perfil (persona) que no haya registrado nada
+    hoy, Coco le escribe un recordatorio suave a TODAS sus cuentas de Telegram
+    -- nunca si ese perfil ya registró algo. Cada perfil es independiente:
+    si Samuel ya registró pero Giovanna no, solo Giovanna recibe el aviso."""
     db: DBClient = context.bot_data['db']
-    allowed_user_ids = context.bot_data.get('allowed_user_ids') or []
-    if not allowed_user_ids:
+    profile_to_user_ids = context.bot_data.get('profile_to_user_ids') or {}
+    if not profile_to_user_ids:
         return
 
     today_str = dt.datetime.now().strftime("%Y-%m-%d")
-    if db.has_transactions_on(today_str):
-        return
 
-    mensaje = random.choice(RECORDATORIOS_NOCTURNOS)
-    for user_id in allowed_user_ids:
-        try:
-            await context.bot.send_message(chat_id=user_id, text=mensaje)
-        except Exception as e:
-            logger.error(f"No se pudo enviar el recordatorio nocturno a {user_id}: {e}")
+    for perfil, user_ids in profile_to_user_ids.items():
+        if db.has_transactions_on(perfil, today_str):
+            continue
+        mensaje = random.choice(RECORDATORIOS_NOCTURNOS)
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=mensaje)
+            except Exception as e:
+                logger.error(f"No se pudo enviar el recordatorio nocturno a {user_id} ({perfil}): {e}")
 
 
 async def send_weekly_report(context) -> None:
     """Job del domingo 8:00 AM: genera y envía el reporte semanal en imagen
-    a todos los usuarios permitidos (o, si no hay lista, no envía nada ya
-    que no habría a quién)."""
+    a cada perfil (persona) con SUS PROPIOS datos, a todas sus cuentas de
+    Telegram. Si no hay ningún perfil configurado, no envía nada."""
     db: DBClient = context.bot_data['db']
-    allowed_user_ids = context.bot_data.get('allowed_user_ids') or []
+    profile_to_user_ids = context.bot_data.get('profile_to_user_ids') or {}
 
-    if not allowed_user_ids:
-        logger.warning("No hay ALLOWED_USER_IDS configurado: no se puede enviar el reporte semanal.")
+    if not profile_to_user_ids:
+        logger.warning("No hay perfiles configurados: no se puede enviar el reporte semanal.")
         return
 
     today = dt.datetime.now()
@@ -72,22 +75,23 @@ async def send_weekly_report(context) -> None:
     fecha_desde = monday.strftime("%Y-%m-%d")
     fecha_hasta = today.strftime("%Y-%m-%d")
 
-    try:
-        summary = db.get_summary(fecha_desde, fecha_hasta, moneda='Bs')
-        image_bytes = render_weekly_report(summary, moneda='Bs', reference=today)
-    except Exception as e:
-        logger.exception(f"Error generando el reporte semanal: {e}")
-        return
-
-    for user_id in allowed_user_ids:
+    for perfil, user_ids in profile_to_user_ids.items():
         try:
-            await context.bot.send_photo(
-                chat_id=user_id,
-                photo=io.BytesIO(image_bytes),
-                caption="📊 Tu resumen semanal de gastos"
-            )
+            summary = db.get_summary(perfil, fecha_desde, fecha_hasta, moneda='Bs')
+            image_bytes = render_weekly_report(summary, moneda='Bs', reference=today)
         except Exception as e:
-            logger.error(f"No se pudo enviar el reporte semanal a {user_id}: {e}")
+            logger.exception(f"Error generando el reporte semanal de {perfil}: {e}")
+            continue
+
+        for user_id in user_ids:
+            try:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=io.BytesIO(image_bytes),
+                    caption="📊 Tu resumen semanal de gastos"
+                )
+            except Exception as e:
+                logger.error(f"No se pudo enviar el reporte semanal a {user_id} ({perfil}): {e}")
 
 
 def main():
@@ -119,6 +123,8 @@ def main():
         application.bot_data["db"] = db
         application.bot_data["categories"] = config.expense_categories
         application.bot_data["allowed_user_ids"] = config.allowed_user_ids
+        application.bot_data["user_id_to_profile"] = config.user_id_to_profile
+        application.bot_data["profile_to_user_ids"] = config.profile_to_user_ids
 
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
@@ -173,6 +179,7 @@ def main():
         logger.info(f"Categorías configuradas: {', '.join(config.expense_categories)}")
         if config.allowed_user_ids:
             logger.info(f"Acceso restringido a user_ids: {config.allowed_user_ids}")
+            logger.info(f"Perfiles (datos aislados por persona): {config.profile_to_user_ids}")
         else:
             logger.warning("ALLOWED_USER_IDS no configurado: cualquiera puede usar el bot.")
 
