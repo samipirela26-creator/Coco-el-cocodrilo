@@ -26,14 +26,20 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
         Tupla (es_valido, mensaje_error)
     """
     tipo = data.get('tipo')
-    if tipo not in ('gasto', 'ingreso', 'ajuste_saldo', 'charla', 'transferencia'):
-        return False, "El campo 'tipo' debe ser 'gasto', 'ingreso', 'ajuste_saldo', 'transferencia' o 'charla'"
+    if tipo not in ('gasto', 'ingreso', 'ajuste_saldo', 'charla', 'transferencia', 'diezmo_pagado'):
+        return False, "El campo 'tipo' debe ser 'gasto', 'ingreso', 'ajuste_saldo', 'transferencia', 'diezmo_pagado' o 'charla'"
 
     if tipo == 'charla':
         return True, ""
 
     if tipo == 'transferencia':
         return _validate_transferencia(data)
+
+    if tipo == 'diezmo_pagado':
+        moneda = data.get('moneda')
+        if moneda and moneda not in MONEDAS_VALIDAS:
+            return False, f"La moneda '{moneda}' no es válida. Use una de: {', '.join(MONEDAS_VALIDAS)}"
+        return True, ""
 
     required_fields = ['monto', 'fecha', 'descripcion']
     if tipo != 'ajuste_saldo':

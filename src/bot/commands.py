@@ -16,7 +16,7 @@ from src.services import fx
 from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
 from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard
-from src.bot.formatters import _format_rates_block, _rate_variation_pct
+from src.bot.formatters import _format_rates_block, _rate_variation_pct, format_diezmo_pagado_message
 from src.bot.texts import _welcome_text, _help_text
 from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI
 from src.reports.weekly_image import render_monthly_report, MESES_ES
@@ -472,6 +472,47 @@ async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await _reply(update, f"🐊 Listo, ya no tiene un límite fijado para {categoria}.")
     else:
         await _reply(update, f"🐊 Anotado: {categoria} tiene un tope de {monto:,.2f} Bs al mes. Le avisaré si se acerca.")
+
+
+async def diezmo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el diezmo pendiente (10% acumulado automáticamente sobre cada
+    ingreso registrado), por moneda. Solo informativo -- no toca ninguna
+    billetera ni el saldo mostrado en /saldo (ver TithesMixin)."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    pendientes = db.get_tithe_status(perfil)
+    if not pendientes:
+        await _reply(update, "🐊 No tiene diezmo pendiente por ahora.")
+        return
+    lines = ["🙏 Diezmo pendiente (10% de sus ingresos):\n"]
+    for p in pendientes:
+        simbolo = MONEDA_SIMBOLO.get(p['moneda'], '')
+        lines.append(f"• {p['moneda']}: {simbolo} {p['monto_pendiente']:,.2f}")
+    lines.append("\nCuando lo pague, dígame \"ya pagué el diezmo\" (o use /diezmo_pagado) y lo dejo en cero.")
+    await _reply(update, '\n'.join(lines))
+
+
+async def diezmo_pagado_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/diezmo_pagado [moneda] -- marca como pagado el diezmo pendiente: de
+    UNA moneda si se indica, o de todas las que tengan pendiente si no.
+    Equivalente por comando a decirle "ya pagué el diezmo" por texto/voz/foto."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    args = context.args
+    moneda = None
+    if args:
+        moneda_arg = args[0].strip().upper()
+        moneda_map = {"BS": "Bs", "USD": "USD", "COP": "COP"}
+        moneda = moneda_map.get(moneda_arg)
+        if not moneda:
+            await _reply(update, "❌ Moneda inválida. Use Bs, USD o COP (o déjelo vacío para pagar todo).")
+            return
+    pagados = db.mark_tithe_paid(perfil, moneda)
+    await _reply(update, format_diezmo_pagado_message(pagados))
 
 
 async def racha_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

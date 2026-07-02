@@ -86,6 +86,19 @@ Antes: {simbolo} {anterior:,.2f}
 Ahora: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
 
 
+def format_diezmo_pagado_message(pagados: list, respuesta: str = "") -> str:
+    """Confirmación al marcar el diezmo como pagado (ver TithesMixin.mark_tithe_paid).
+    `pagados` es una lista de {"moneda", "monto_pagado"} -- vacía si no había nada
+    pendiente en ninguna moneda."""
+    if not pagados:
+        return "🐊 No tenía diezmo pendiente que marcar como pagado." + _coco_line(respuesta)
+    lines = ["✅ Diezmo marcado como pagado\n"]
+    for p in pagados:
+        simbolo = MONEDA_SIMBOLO.get(p['moneda'], '')
+        lines.append(f"🙏 {p['moneda']}: {simbolo} {p['monto_pagado']:,.2f}")
+    return '\n'.join(lines) + _coco_line(respuesta)
+
+
 def _tasa_label(moneda_origen: str, moneda_destino: str) -> str:
     """Ej: 'Bs/USD' si el par es Bs<->USD, para que la tasa mostrada en la
     confirmación tenga unidades claras (misma convención que /cambio: cuántos

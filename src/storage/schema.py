@@ -79,6 +79,20 @@ class SchemaMixin:
             )
         """)
 
+        # Diezmo (10% de cada ingreso), solo informativo -- acumula cuánto le
+        # corresponde apartar por moneda, aislado por perfil. NO toca ninguna
+        # billetera: se actualiza sumando desde TransactionsMixin.append_expense
+        # (cuando tipo == 'ingreso') y se resetea a 0 al marcarlo pagado.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tithes (
+                perfil TEXT NOT NULL,
+                moneda TEXT NOT NULL,
+                monto_pendiente REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (perfil, moneda)
+            )
+        """)
+
         # Historial de cambios de saldo por billetera (fotos, comandos, texto/voz
         # tipo "tengo X en efectivo"), para poder auditar o corregir a mano si un
         # OCR/LLM lee mal un número.

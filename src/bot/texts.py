@@ -46,6 +46,8 @@ Comandos:
 /deshacer - revertir el último gasto o ingreso registrado
 /presupuesto [categoría] [monto] - fijar o ver topes mensuales por categoría
 /racha - ver sus días seguidos registrando
+/diezmo - ver su diezmo pendiente (10% de cada ingreso, solo informativo)
+/diezmo_pagado [moneda] - marcar el diezmo como pagado (o dígame "ya pagué el diezmo")
 /help - ver categorías y ayuda"""
 
 
@@ -85,4 +87,8 @@ Comandos:
 /deshacer - revierte el último gasto/ingreso, por si algo se registró mal
 /presupuesto <categoría> <monto en Bs> - fija un tope mensual; sin argumentos, lo lista
   (le aviso en la confirmación del gasto si va llegando al 80% o ya lo superó)
-/racha - sus días seguidos registrando (también sale dentro de /saldo)"""
+/racha - sus días seguidos registrando (también sale dentro de /saldo)
+/diezmo - cuánto tiene pendiente de diezmo (10% de cada ingreso, se acumula solo;
+  nunca toca ninguna billetera ni el saldo de /saldo, es solo informativo)
+/diezmo_pagado [Bs/USD/COP] - marca el diezmo como pagado (todo, o solo esa moneda);
+  también puede decirme "ya pagué el diezmo" por texto, voz o una captura de la transferencia"""

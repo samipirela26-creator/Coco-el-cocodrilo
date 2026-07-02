@@ -44,6 +44,10 @@ class TransactionsMixin:
                 (delta, datetime.now().isoformat(), perfil, moneda, cuenta)
             )
             self._conn.commit()
+            if tipo == 'ingreso':
+                # Diezmo: solo informativo, no toca ninguna billetera (ver
+                # TithesMixin.add_tithe_from_income en src/storage/tithes.py).
+                self.add_tithe_from_income(perfil, moneda, monto)
             logger.info(f"Transacción registrada [{perfil}]: {tipo} {moneda}/{cuenta} {monto} - {categoria} - {fecha}")
             return cuenta
         except sqlite3.Error as e:
@@ -77,6 +81,8 @@ class TransactionsMixin:
             )
             self._conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
             self._conn.commit()
+            if tipo == 'ingreso':
+                self.revert_tithe_from_income(perfil, moneda, monto)
             nuevo_balance = self.get_wallet_balance(perfil, moneda, cuenta)
             logger.info(f"Transacción deshecha [{perfil}]: id={tx_id} {tipo} {moneda}/{cuenta} {monto} - {categoria}")
             return {

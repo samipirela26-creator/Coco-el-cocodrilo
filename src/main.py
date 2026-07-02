@@ -16,7 +16,7 @@ from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
     presupuesto_command, racha_command, menu_command, menu_callback,
-    resumen_nav_callback, deshacer_callback,
+    resumen_nav_callback, deshacer_callback, diezmo_command, diezmo_pagado_command,
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback,
@@ -141,6 +141,8 @@ def main():
         application.add_handler(CommandHandler("deshacer", deshacer_command))
         application.add_handler(CommandHandler("presupuesto", presupuesto_command))
         application.add_handler(CommandHandler("racha", racha_command))
+        application.add_handler(CommandHandler("diezmo", diezmo_command))
+        application.add_handler(CommandHandler("diezmo_pagado", diezmo_pagado_command))
         application.add_handler(CommandHandler("menu", menu_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))

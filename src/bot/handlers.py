@@ -15,7 +15,10 @@ from src.utils.exceptions import (
     StorageError,
 )
 from src.bot.access import _is_allowed, _perfil_de
-from src.bot.formatters import format_confirmation_message, format_ajuste_message, format_transferencia_message
+from src.bot.formatters import (
+    format_confirmation_message, format_ajuste_message, format_transferencia_message,
+    format_diezmo_pagado_message,
+)
 from src.bot.replies import _reply, _deshacer_keyboard, _category_keyboard
 from src.bot.constants import MONEDA_SIMBOLO
 from src.bot.commands import menu_command, _maybe_welcome_new_profile
@@ -32,6 +35,15 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
     transferencia (a un tercero -- distinto de "transferencia" tipo, que es
     entre billeteras propias)."""
     moneda = data.get('moneda', 'Bs')
+
+    if data['tipo'] == 'diezmo_pagado':
+        # Diezmo: solo informativo, no toca ninguna billetera (ver
+        # TithesMixin.mark_tithe_paid en src/storage/tithes.py). "moneda"
+        # puede venir vacía/null -- en ese caso salda el pendiente de todas.
+        pagados = db.mark_tithe_paid(perfil, data.get('moneda') or None)
+        mensaje = format_diezmo_pagado_message(pagados, data.get('respuesta'))
+        await _reply(update, f"{prefix}{mensaje}")
+        return
 
     if data['tipo'] == 'ajuste_saldo':
         cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), data['monto'], fuente=fuente)
@@ -239,6 +251,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         captura_tipo = data.get('captura_tipo')
         moneda = data.get('moneda', 'Bs')
+
+        if captura_tipo == 'diezmo_pagado':
+            pagados = db.mark_tithe_paid(perfil, moneda if data.get('moneda') else None)
+            mensaje = format_diezmo_pagado_message(pagados, data.get('respuesta'))
+            await update.message.reply_text(f"📸 Detecté un pago de diezmo.\n\n{mensaje}")
+            return
 
         if captura_tipo == 'saldo':
             monto_banco = float(data.get('monto', 0))

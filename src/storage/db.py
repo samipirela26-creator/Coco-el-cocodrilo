@@ -33,6 +33,7 @@ DAO/Repository grandes), cada uno en su propio archivo:
 - wallets.py      -> WalletsMixin: saldo por billetera, transferencias
 - transactions.py -> TransactionsMixin: gasto/ingreso, categorías, resumen, racha
 - budgets.py      -> BudgetsMixin: presupuestos por categoría
+- tithes.py       -> TithesMixin: diezmo (10% de ingresos), solo informativo
 - fx_cache.py     -> FxCacheMixin: cache de tasas de cambio
 Todos comparten `self._conn` (la conexión sqlite3 abierta en `__init__`).
 """
@@ -43,6 +44,7 @@ from src.storage.schema import SchemaMixin
 from src.storage.wallets import WalletsMixin
 from src.storage.transactions import TransactionsMixin
 from src.storage.budgets import BudgetsMixin
+from src.storage.tithes import TithesMixin
 from src.storage.fx_cache import FxCacheMixin
 # Re-exportados por compatibilidad: código previo podía importar estos
 # nombres directamente desde `src.storage.db`.
@@ -54,7 +56,7 @@ from src.storage.constants import (  # noqa: F401
 logger = logging.getLogger('gastos-bot')
 
 
-class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, FxCacheMixin):
+class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, TithesMixin, FxCacheMixin):
     """Cliente para leer/escribir transacciones y billeteras en SQLite.
 
     Todos los métodos que tocan datos financieros reciben un `perfil` (str)

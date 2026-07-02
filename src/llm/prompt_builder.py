@@ -114,6 +114,13 @@ Reglas:
       deja "tasa_cambio" en null.
   * Para "transferencia" deja "monto" en 0 y "categoria" vacía (no se usan) -- usa solo los
     campos _origen/_destino. "descripcion" sí debe llenarse con un resumen breve.
+- "tipo" es "diezmo_pagado" SOLO si el usuario está avisando explícitamente que YA PAGÓ o
+  APARTÓ su diezmo (ej. "ya pagué el diezmo", "di mi diezmo en dólares", "aparté el diezmo de
+  este mes"). NO es un gasto/ingreso nuevo, es solo una marca de "pagado" sobre lo que ya se
+  venía acumulando automáticamente (10% de cada ingreso). Si el usuario menciona una moneda
+  específica (ej. "pagué el diezmo en dólares"), usa esa "moneda"; si no especifica ninguna,
+  deja "moneda" en null (se salda el pendiente de TODAS las monedas). Para "diezmo_pagado" deja
+  "monto" en 0 y "categoria"/"descripcion" vacíos -- no se usan.
 """
 
 
@@ -146,7 +153,7 @@ montos, usa "tipo": "charla" y responde en "respuesta" como Coco lo haría (brev
 en su voz), charlando de vuelta o preguntando qué quiere registrar si viene al caso.
 Responde EXCLUSIVAMENTE con un objeto JSON.
 
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia" o "charla">, "monto": <float positivo, 0 si es charla o transferencia>, "categoria": <string, vacío si es ajuste_saldo, transferencia o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación
   (saludo, pregunta, comentario). "monto" va en 0, "categoria" y "descripcion" vacíos.
@@ -170,18 +177,23 @@ def build_image_prompt(categories: list, dynamic_categories: list = None) -> str
 de aplicaciones bancarias o de pago (ej. Banesco, Mercantil, BDV, Binance, Zelle, Pago Móvil).
 HOY ES {today}.
 {_persona_coco()}
-Existen dos tipos de captura posibles:
+Existen tres tipos de captura posibles:
 1. "transferencia": una confirmación de pago/transferencia (envío o recepción de dinero).
 2. "saldo": una pantalla que muestra el saldo/balance total de una cuenta (no un movimiento).
+3. "diezmo_pagado": una confirmación de pago/transferencia donde el concepto o la descripción
+   menciona explícitamente "diezmo" (ej. una transferencia con motivo "diezmo" o "ofrenda-diezmo").
 
 Responde EXCLUSIVAMENTE con un objeto JSON con este formato:
-{{"captura_tipo": <"transferencia" o "saldo">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "monto": <float, siempre positivo>, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
+{{"captura_tipo": <"transferencia", "saldo" o "diezmo_pagado">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "monto": <float, siempre positivo, 0 si captura_tipo es "diezmo_pagado">, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda clara>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 Reglas adicionales:
 - Si es una confirmación de transferencia donde el usuario ENVÍA dinero (paga algo, transfiere a otra persona/comercio), "tipo" es "gasto".
 - Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".
 - Si es una pantalla de saldo de cuenta (no un movimiento), usa "captura_tipo": "saldo" y en "monto" pon el saldo mostrado.
   En este caso "tipo", "categoria" y "descripcion" pueden omitirse o dejarse vacíos.
+- Si el concepto/motivo de la transferencia menciona explícitamente "diezmo", usa
+  "captura_tipo": "diezmo_pagado" en vez de "transferencia" -- esa captura NO se registra como
+  gasto, solo marca como pagado el diezmo pendiente. "monto", "tipo" y "categoria" se dejan vacíos/0.
 - Para identificar la cuenta de una captura de "saldo":
   * Si es una app bancaria en bolívares (BDV, Banesco, Mercantil, Provincial, etc.), usa "moneda": "Bs" y "cuenta": "BDV".
   * Si es Binance (o similar) mostrando saldo de USDT/dólares digitales, usa "moneda": "USD" y "cuenta": "Binance".
@@ -211,7 +223,7 @@ lo que dice, y responde EXCLUSIVAMENTE con un objeto JSON. Si NO menciona ningú
 NO inventes montos: usa "tipo": "charla" y responde en "respuesta" como Coco.
 HOY ES {today}.
 {_persona_coco()}
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia" o "charla">, "monto": <float positivo, 0 si es charla o transferencia>, "categoria": <string, vacío si es ajuste_saldo, transferencia o charla>, "moneda": <"Bs", "USD" o "COP">, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación.
   "monto" va en 0, "categoria" y "descripcion" vacíos.
