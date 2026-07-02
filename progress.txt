@@ -88,3 +88,11 @@
   - Verificación usada (sin bot real corriendo, y sin tocar la instancia de producción del Lenovo): `python3 -m py_compile` + `.venv/bin/python -c "import src.main"` (sin imports circulares pese a que handlers.py ahora importa más de replies.py/constants.py), pruebas funcionales con `DBClient(':memory:')` ejercitando los renderers de imagen (bytes PNG > 0) y un script con `unittest.mock.AsyncMock` simulando `Update`/`CallbackQuery`/`context.bot_data` para correr `saldo_command`, `resumen_command`, `resumen_nav_callback`, `deshacer_callback`, `_offer_category_picker` y `category_callback` de punta a punta (incluyendo que el gasto elegido por botón quedó realmente guardado en la DB).
   - Nunca se levantó una instancia local del bot (`run.py`) para esta fase -- ya hay precedente de que eso causa `telegram.error.Conflict` contra la instancia de producción del Lenovo. Toda la verificación fue con mocks/DB en memoria.
 ---
+
+## [2026-07-02] - Fix: emoji de cuenta inconsistente en confirmaciones
+- El usuario notó (por captura de pantalla real, ajuste de saldo en Binance) que el emoji de la cuenta se veía "raro". Causa: `format_confirmation_message`, `format_ajuste_message` y `format_transferencia_message` (src/bot/formatters.py) tenían el emoji de billetera HARDCODEADO como 👛 sin importar la cuenta, mientras que `CUENTA_EMOJI` (src/bot/constants.py: BDV=🏦, Binance=💻, Efectivo=💵) ya existía y solo se usaba en `saldo_command`. Es decir, /saldo mostraba el emoji correcto por cuenta pero cualquier confirmación de gasto/ingreso/ajuste/transferencia mostraba siempre la misma cartera genérica, sin importar si era BDV, Binance o Efectivo.
+- Fix: las 3 funciones ahora hacen `CUENTA_EMOJI.get(cuenta, '👛')` (con 👛 como fallback si la cuenta no está en el diccionario) en vez del emoji fijo.
+- Files changed: src/bot/formatters.py.
+- **Learnings for future iterations:**
+  - `CUENTA_EMOJI`/`MONEDA_SIMBOLO` (src/bot/constants.py) son las fuentes de verdad para símbolos/emoji de presentación -- cualquier mensaje nuevo que muestre una cuenta/moneda debe usarlas, nunca hardcodear un emoji fijo para "cuenta" en general (el error quedó adentro por 3 funciones sin que ninguna prueba lo detectara, porque los tests solo comprobaban que el texto se generaba sin excepción, no el contenido exacto de los emojis).
+---

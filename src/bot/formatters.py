@@ -4,7 +4,7 @@ Ninguna función de este módulo llama a Telegram ni a la base de datos --
 solo arman texto a partir de datos ya calculados (fácil de testear aislado).
 """
 from src.services import fx
-from src.bot.constants import MONEDA_SIMBOLO
+from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI
 
 
 def _rate_variation_pct(rate: float, previous: float) -> float:
@@ -62,11 +62,12 @@ def format_confirmation_message(expense_data: dict, balance: float, cuenta: str,
     tipo_str = "Gasto" if expense_data['tipo'] == 'gasto' else "Ingreso"
     moneda = expense_data.get('moneda', 'Bs')
     simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    cuenta_emoji = CUENTA_EMOJI.get(cuenta, '👛')
     return f"""✅ {tipo_str} registrado
 
 {emoji} Monto: {simbolo} {expense_data['monto']:.2f} {moneda}
 📂 Categoría: {expense_data['categoria']}
-👛 Cuenta: {cuenta}
+{cuenta_emoji} Cuenta: {cuenta}
 📅 Fecha: {expense_data['fecha']}
 📝 {expense_data['descripcion']}
 
@@ -77,9 +78,10 @@ def format_confirmation_message(expense_data: dict, balance: float, cuenta: str,
 
 def format_ajuste_message(moneda: str, cuenta: str, anterior: float, nuevo: float, respuesta: str = "") -> str:
     simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    cuenta_emoji = CUENTA_EMOJI.get(cuenta, '👛')
     return f"""✅ Saldo actualizado
 
-👛 {cuenta} ({moneda})
+{cuenta_emoji} {cuenta} ({moneda})
 Antes: {simbolo} {anterior:,.2f}
 Ahora: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
 
@@ -99,16 +101,18 @@ def _tasa_label(moneda_origen: str, moneda_destino: str) -> str:
 def format_transferencia_message(resultado: dict, respuesta: str = "", tasa_cambio: float = None) -> str:
     simbolo_o = MONEDA_SIMBOLO.get(resultado['moneda_origen'], '')
     simbolo_d = MONEDA_SIMBOLO.get(resultado['moneda_destino'], '')
+    emoji_o = CUENTA_EMOJI.get(resultado['cuenta_origen'], '👛')
+    emoji_d = CUENTA_EMOJI.get(resultado['cuenta_destino'], '👛')
     tasa_line = ""
     if tasa_cambio:
         label = _tasa_label(resultado['moneda_origen'], resultado['moneda_destino'])
         tasa_line = f"\n💱 Tasa usada: {float(tasa_cambio):,.2f}" + (f" {label}" if label else "")
     return f"""✅ Transferencia registrada
 
-👛 {resultado['cuenta_origen']} ({resultado['moneda_origen']})
+{emoji_o} {resultado['cuenta_origen']} ({resultado['moneda_origen']})
 Antes: {simbolo_o} {resultado['anterior_origen']:,.2f}
 Ahora: {simbolo_o} {resultado['nuevo_origen']:,.2f}
 
-👛 {resultado['cuenta_destino']} ({resultado['moneda_destino']})
+{emoji_d} {resultado['cuenta_destino']} ({resultado['moneda_destino']})
 Antes: {simbolo_d} {resultado['anterior_destino']:,.2f}
 Ahora: {simbolo_d} {resultado['nuevo_destino']:,.2f}{tasa_line}""" + _coco_line(respuesta)
