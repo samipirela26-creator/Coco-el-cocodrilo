@@ -6,7 +6,7 @@ pantalla (transferencia/saldo, con adopción directa del saldo leído) y notas
 de voz.
 """
 import logging
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from src.llm.prompt_builder import build_prompt
 from src.llm.base import LLMConnector
@@ -45,6 +45,48 @@ def _perfil_de(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
     return mapping.get(user_id, str(user_id))
 
 
+async def _reply(update: Update, text: str, **kwargs) -> None:
+    """Responde tanto si el update viene de un mensaje normal como de un botón
+    del menú (callback_query) -- así los comandos se pueden reusar tal cual
+    desde ambos flujos."""
+    target = update.message or (update.callback_query.message if update.callback_query else None)
+    if target:
+        await target.reply_text(text, **kwargs)
+
+
+def _menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Saldo", callback_data="coco_menu:saldo"),
+         InlineKeyboardButton("Resumen", callback_data="coco_menu:resumen")],
+        [InlineKeyboardButton("Cambio", callback_data="coco_menu:cambio"),
+         InlineKeyboardButton("Ayuda", callback_data="coco_menu:ayuda")],
+    ])
+
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update, context):
+        return
+    await _reply(update, "🐊 ¿Qué necesita?", reply_markup=_menu_keyboard())
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja los botones inline del /menu (mismo patrón que el menú de Larry:
+    cada botón reusa el comando equivalente, sin duplicar lógica)."""
+    query = update.callback_query
+    await query.answer()
+    if not _is_allowed(update, context):
+        return
+    accion = (query.data or "").split(":", 1)[-1]
+    if accion == "saldo":
+        await saldo_command(update, context)
+    elif accion == "resumen":
+        await resumen_command(update, context)
+    elif accion == "cambio":
+        await cambio_command(update, context)
+    elif accion == "ayuda":
+        await help_command(update, context)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
@@ -77,6 +119,7 @@ También puedes enviarme:
 🎤 Una nota de voz describiendo el gasto o el saldo
 
 Comandos:
+/menu - botones rápidos (saldo, resumen, cambio, ayuda)
 /saldo - ver tu saldo (BDV, Binance, y Efectivo con USD + COP juntos)
 /resumen - ver gastos del mes por categoría (con porcentajes)
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
@@ -114,12 +157,13 @@ Si no mencionas moneda, asumo Bs. Puedes decir "20 dólares" o "3000 pesos" para
 En USD, si no mencionas Binance/USDT/cripto, asumo que es Efectivo.
 
 Comandos:
+/menu - botones rápidos (saldo, resumen, cambio, ayuda), también escribiendo "menu"
 /saldo - tu saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de tus Bs
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
 /cambio - tasas BCV, Binance y USD->COP"""
-    await update.message.reply_text(help_message)
+    await _reply(update, help_message)
 
 
 def _format_rates_block(bcv: float, binance: float) -> str:
@@ -136,7 +180,7 @@ async def cambio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     db: DBClient = context.bot_data['db']
     bcv = fx.get_bcv_rate(db)
     binance = fx.get_binance_rate(db)
-    await update.message.reply_text(f"💱 Tasas actuales\n\n{_format_rates_block(bcv, binance)}")
+    await _reply(update, f"💱 Tasas actuales\n\n{_format_rates_block(bcv, binance)}")
 
 
 async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -184,9 +228,9 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append("")
         lines.append(_format_rates_block(bcv, binance))
 
-        await update.message.reply_text('\n'.join(lines))
+        await _reply(update, '\n'.join(lines))
     except StorageError as e:
-        await update.message.reply_text(f"❌ Error al consultar el saldo: {e}")
+        await _reply(update, f"❌ Error al consultar el saldo: {e}")
 
 
 async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -261,7 +305,7 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             year, month = map(int, args[0].split('-'))
         except ValueError:
-            await update.message.reply_text("Formato inválido. Usa /resumen YYYY-MM, ej: /resumen 2026-06")
+            await _reply(update, "Formato inválido. Usa /resumen YYYY-MM, ej: /resumen 2026-06")
             return
     else:
         now = datetime.now()
@@ -276,14 +320,14 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         bcv = fx.get_bcv_rate(db)
         binance = fx.get_binance_rate(db)
     except StorageError as e:
-        await update.message.reply_text(f"❌ Error al calcular el resumen: {e}")
+        await _reply(update, f"❌ Error al calcular el resumen: {e}")
         return
 
     tiene_movimientos = any(
         s['total_gastos'] > 0 or s['total_ingresos'] > 0 for s in summaries.values()
     )
     if not tiene_movimientos:
-        await update.message.reply_text(f"No hay movimientos registrados en {year:04d}-{month:02d}.")
+        await _reply(update, f"No hay movimientos registrados en {year:04d}-{month:02d}.")
         return
 
     lines = [f"📊 Resumen {year:04d}-{month:02d}\n"]
@@ -300,7 +344,7 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     lines.append(_format_rates_block(bcv, binance))
 
-    await update.message.reply_text('\n'.join(lines))
+    await _reply(update, '\n'.join(lines))
 
 
 # ---------------------------------------------------------------------- #
@@ -432,6 +476,10 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     """
     Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar/ajustar saldo 5) confirmar.
     """
+    if user_message.strip().lower() in ("menu", "menú", "m"):
+        await menu_command(update, context)
+        return
+
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
     llm_connector: LLMConnector = context.bot_data['llm_connector']

@@ -6,7 +6,7 @@ import random
 import signal
 import sys
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from src.config import Config
 from src.utils.logger import setup_logger
 from src.llm.gemini_client import GeminiClient
@@ -14,8 +14,8 @@ from src.storage.db import DBClient
 from src.reports.weekly_image import render_weekly_report
 from src.bot.telegram_handler import (
     start_command, help_command, saldo_command, saldo_inicial_command,
-    resumen_command, cambio_command, handle_message, handle_photo, handle_voice,
-    error_handler,
+    resumen_command, cambio_command, menu_command, menu_callback,
+    handle_message, handle_photo, handle_voice, error_handler,
 )
 
 logger = None
@@ -133,6 +133,8 @@ def main():
         application.add_handler(CommandHandler("resumen", resumen_command))
         application.add_handler(CommandHandler("cambio", cambio_command))
         application.add_handler(CommandHandler("tasas", cambio_command))
+        application.add_handler(CommandHandler("menu", menu_command))
+        application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )
