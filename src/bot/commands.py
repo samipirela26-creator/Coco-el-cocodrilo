@@ -60,10 +60,32 @@ async def _maybe_welcome_new_profile(update: Update, context: ContextTypes.DEFAU
     agregó a mano en USER_PROFILES), le manda el saludo de bienvenida UNA
     sola vez, antes de procesar su mensaje/foto/nota de voz con normalidad.
     Cada perfil nuevo queda aislado (sus propios saldos/gastos), no ve nada
-    de los demás."""
+    de los demás. Además, si hay OWNER_USER_ID configurado, le avisa al
+    dueño del bot (para que se entere de quién se está registrando solo)."""
     db: DBClient = context.bot_data['db']
     if db.is_new_profile(perfil):
         await _reply(update, _welcome_text(nuevo_registro=True))
+        await _notify_owner_new_profile(update, context, perfil)
+
+
+async def _notify_owner_new_profile(update: Update, context: ContextTypes.DEFAULT_TYPE, perfil: str) -> None:
+    owner_id = context.bot_data.get('owner_user_id')
+    if not owner_id:
+        return
+    user = update.effective_user
+    if user.id == owner_id:
+        return  # el dueño no se auto-notifica si el perfil nuevo es el suyo
+    nombre = user.full_name or user.username or str(user.id)
+    try:
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=(
+                f"🐊 Nuevo registro en Coco: {nombre} (user_id {user.id}, "
+                f"perfil '{perfil}') acaba de escribirle por primera vez."
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"No se pudo avisar al dueño del nuevo perfil '{perfil}': {e}")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

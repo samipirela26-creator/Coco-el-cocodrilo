@@ -1,5 +1,9 @@
-"""Servicio de tasas de cambio Bs->USD (BCV y Binance/paralelo) usando la API
-gratuita de pyDolarVenezuela (https://pydolarve.org/api/v1/dollar).
+"""Servicio de tasas de cambio Bs->USD (BCV y paralelo) usando la API gratuita
+DolarApi (https://ve.dolarapi.com/v1/dolares) -- reemplazo de pyDolarVenezuela
+(pydolarve.org), cuyo dominio dejó de resolver (caído/discontinuado, verificado
+desde dos redes distintas el 2026-07-02). DolarApi es de código abierto
+(enzonotario/esjs-dolar-api en GitHub), sin API key, y expone endpoints
+separados por fuente: /v1/dolares/oficial (BCV) y /v1/dolares/paralelo.
 
 La API exacta puede cambiar de forma (parámetros, nombres de campos), por lo
 que este cliente es defensivo: si falla la petición o el parseo, usa el
@@ -15,31 +19,27 @@ import requests
 
 logger = logging.getLogger('gastos-bot')
 
-BASE_URL = "https://pydolarve.org/api/v1/dollar"
+BASE_URL = "https://ve.dolarapi.com/v1/dolares"
 CACHE_TTL_MINUTES = 60
 FALLBACK_RATE = 40.0  # valor de respaldo si nunca hubo cache ni respuesta de la API
 COP_PER_USD = 3600.0  # tasa fija pedida por el usuario
 
 
 def _fetch_rate_from_api(page: str) -> float:
-    """Hace la petición HTTP a pyDolarVenezuela y extrae el precio promedio.
-    Puede lanzar excepción si algo falla; el llamador debe manejarla."""
-    params = {"page": page}
-    resp = requests.get(BASE_URL, params=params, timeout=10)
+    """Hace la petición HTTP a DolarApi (un fuente/endpoint por tasa) y
+    extrae el precio promedio. Puede lanzar excepción si algo falla; el
+    llamador debe manejarla."""
+    resp = requests.get(f"{BASE_URL}/{page}", timeout=10)
     resp.raise_for_status()
     data = resp.json()
 
-    # La forma exacta de la respuesta puede variar; probamos varias rutas comunes.
     if isinstance(data, dict):
-        if "monitors" in data and isinstance(data["monitors"], dict):
-            # Estructura tipo {"monitors": {"usd": {"price": ...}}}
-            for v in data["monitors"].values():
-                if isinstance(v, dict) and "price" in v:
-                    return float(v["price"])
-        if "price" in data:
-            return float(data["price"])
-        if "promedio" in data:
+        if "promedio" in data and data["promedio"] is not None:
             return float(data["promedio"])
+        # Respaldo por si el campo cambia de nombre: compra/venta promediados.
+        compra, venta = data.get("compra"), data.get("venta")
+        if compra is not None and venta is not None:
+            return (float(compra) + float(venta)) / 2
     raise ValueError(f"No se pudo extraer la tasa de la respuesta: {data}")
 
 
@@ -82,23 +82,23 @@ def _get_rate(db, page: str, cache_key: str) -> float:
 
 def get_bcv_rate(db) -> float:
     """Tasa oficial BCV (Bs por USD)."""
-    return _get_rate(db, page="bcv", cache_key="bcv")
+    return _get_rate(db, page="oficial", cache_key="bcv")
 
 
 def get_binance_rate(db) -> float:
     """Tasa paralelo/Binance (Bs por USD)."""
-    return _get_rate(db, page="enparalelovzla", cache_key="binance")
+    return _get_rate(db, page="paralelo", cache_key="binance")
 
 
 def get_bcv_rate_with_variation(db) -> tuple:
     """Como get_bcv_rate, pero retorna (rate, previous_rate_or_None) para
     poder avisar si la tasa se movió bastante desde la última vez consultada."""
-    return _get_rate_full(db, page="bcv", cache_key="bcv")
+    return _get_rate_full(db, page="oficial", cache_key="bcv")
 
 
 def get_binance_rate_with_variation(db) -> tuple:
     """Como get_binance_rate, pero retorna (rate, previous_rate_or_None)."""
-    return _get_rate_full(db, page="enparalelovzla", cache_key="binance")
+    return _get_rate_full(db, page="paralelo", cache_key="binance")
 
 
 def get_all_rates(db) -> dict:

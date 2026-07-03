@@ -71,6 +71,13 @@ class Config:
                 self.user_id_to_profile[uid] = nombre
                 self.profile_to_user_ids.setdefault(nombre, []).append(uid)
 
+        # Dueño del bot: si está configurado, recibe un aviso corto cada vez
+        # que un perfil nuevo se registra solo (registro abierto -- alguien
+        # que nunca fue agregado a mano le escribió al bot por primera vez).
+        # Opcional: sin esto, el bot funciona igual, solo que sin avisar.
+        owner_id_str = os.getenv('OWNER_USER_ID', '').strip()
+        self.owner_user_id = int(owner_id_str) if owner_id_str else None
+
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
         self.log_dir = os.getenv('LOG_DIR', 'logs')
 

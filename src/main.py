@@ -28,6 +28,27 @@ logger = None
 # Larry, para aprovechar un hábito ya existente) -- SOLO se manda si ese día
 # no hubo ningún registro. Varias variantes para no repetir siempre la misma
 # frase (personalidad de Coco: humor ligero, nunca forzado).
+def _perfiles_con_user_ids(config_mapping: dict, db: DBClient) -> dict:
+    """Combina el mapeo fijo del .env (USER_PROFILES/ALLOWED_USER_IDS,
+    calculado una sola vez al arrancar) con los perfiles de registro abierto
+    que ya existen en la base de datos pero que nadie agregó a mano -- para
+    esos, el nombre del perfil ES su user_id (ver src/config.py:
+    Config.__init__ y src/bot/access.py:_perfil_de), así que se puede derivar
+    directo sin necesitar guardarlo aparte. Se recalcula en cada corrida de
+    los jobs (no se cachea) para que alcance a quien se registró después de
+    que el bot arrancó."""
+    resultado = dict(config_mapping)
+    ya_mapeados = {uid for ids in resultado.values() for uid in ids}
+    for perfil in db.get_all_perfiles():
+        if perfil in resultado or not perfil.isdigit():
+            continue
+        uid = int(perfil)
+        if uid in ya_mapeados:
+            continue
+        resultado[perfil] = [uid]
+    return resultado
+
+
 RECORDATORIOS_NOCTURNOS = [
     "🐊 Buenas noches. No vi ningún movimiento suyo hoy en el libro mayor... "
     "¿de verdad no gastó ni un centavo, o se le quedó algo por contarme?",
@@ -38,13 +59,26 @@ RECORDATORIOS_NOCTURNOS = [
 ]
 
 
+async def run_daily_backup(context) -> None:
+    """Job diario 3:00 AM: respaldo local de gastos.db (últimos 14 días),
+    mismo patrón que asistente-bot -- ver DBClient.respaldo_diario. Un
+    backup que vive en el mismo disco no reemplaza uno offsite, pero ya es
+    muchísimo mejor que depender de que alguien se acuerde de hacerlo a mano."""
+    db: DBClient = context.bot_data['db']
+    try:
+        db.respaldo_diario()
+    except Exception as e:
+        logger.exception(f"Error al hacer el backup diario de la base de datos: {e}")
+
+
 async def send_nightly_reminder(context) -> None:
     """Job diario 22:00: por cada perfil (persona) que no haya registrado nada
     hoy, Coco le escribe un recordatorio suave a TODAS sus cuentas de Telegram
     -- nunca si ese perfil ya registró algo. Cada perfil es independiente:
     si Samuel ya registró pero Giovanna no, solo Giovanna recibe el aviso."""
     db: DBClient = context.bot_data['db']
-    profile_to_user_ids = context.bot_data.get('profile_to_user_ids') or {}
+    config_mapping = context.bot_data.get('profile_to_user_ids') or {}
+    profile_to_user_ids = _perfiles_con_user_ids(config_mapping, db)
     if not profile_to_user_ids:
         return
 
@@ -66,7 +100,8 @@ async def send_weekly_report(context) -> None:
     a cada perfil (persona) con SUS PROPIOS datos, a todas sus cuentas de
     Telegram. Si no hay ningún perfil configurado, no envía nada."""
     db: DBClient = context.bot_data['db']
-    profile_to_user_ids = context.bot_data.get('profile_to_user_ids') or {}
+    config_mapping = context.bot_data.get('profile_to_user_ids') or {}
+    profile_to_user_ids = _perfiles_con_user_ids(config_mapping, db)
 
     if not profile_to_user_ids:
         logger.warning("No hay perfiles configurados: no se puede enviar el reporte semanal.")
@@ -129,6 +164,7 @@ def main():
         application.bot_data["allowed_user_ids"] = config.allowed_user_ids
         application.bot_data["user_id_to_profile"] = config.user_id_to_profile
         application.bot_data["profile_to_user_ids"] = config.profile_to_user_ids
+        application.bot_data["owner_user_id"] = config.owner_user_id
 
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
@@ -176,6 +212,14 @@ def main():
                 name="recordatorio_nocturno",
             )
             logger.info("Job de recordatorio nocturno (22:00) programado.")
+
+            application.job_queue.run_daily(
+                run_daily_backup,
+                time=dt.time(hour=3, minute=0),
+                days=(0, 1, 2, 3, 4, 5, 6),
+                name="backup_diario",
+            )
+            logger.info("Job de backup diario de la base de datos (3:00 AM) programado.")
         else:
             logger.warning(
                 "JobQueue no disponible (¿falta instalar python-telegram-bot[job-queue]?). "

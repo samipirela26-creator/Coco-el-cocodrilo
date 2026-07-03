@@ -38,7 +38,9 @@ DAO/Repository grandes), cada uno en su propio archivo:
 Todos comparten `self._conn` (la conexión sqlite3 abierta en `__init__`).
 """
 import logging
+import os
 import sqlite3
+import datetime
 from src.utils.exceptions import StorageError
 from src.storage.schema import SchemaMixin
 from src.storage.wallets import WalletsMixin
@@ -76,3 +78,33 @@ class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, Tithe
 
     def close(self):
         self._conn.close()
+
+    def respaldo_diario(self, carpeta: str = "backups", conservar: int = 14) -> bool:
+        """Copia gastos.db a `carpeta/` una vez al día (mismo patrón que
+        asistente-bot: API de backup online de SQLite, no una copia cruda del
+        archivo vivo -- así el snapshot siempre queda consistente aunque haya
+        escrituras concurrentes). Conserva los últimos `conservar` días y
+        borra el resto. Retorna True si hizo un backup nuevo, False si ya
+        había uno de hoy (para que un job diario sea idempotente si se
+        reintenta el mismo día)."""
+        hoy = datetime.date.today().isoformat()
+        os.makedirs(carpeta, exist_ok=True)
+        destino = os.path.join(carpeta, f"gastos-{hoy}.db")
+        if os.path.exists(destino):
+            return False
+        respaldo = sqlite3.connect(destino)
+        try:
+            self._conn.backup(respaldo)
+        finally:
+            respaldo.close()
+        viejos = sorted(
+            f for f in os.listdir(carpeta)
+            if f.startswith("gastos-") and f.endswith(".db")
+        )
+        for f in viejos[:-conservar]:
+            try:
+                os.remove(os.path.join(carpeta, f))
+            except OSError:
+                pass
+        logger.info(f"Backup diario de la base de datos creado: {destino}")
+        return True

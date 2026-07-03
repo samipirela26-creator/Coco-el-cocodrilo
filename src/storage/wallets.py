@@ -23,6 +23,17 @@ class WalletsMixin:
         ).fetchone()
         return row is None
 
+    def get_all_perfiles(self) -> list:
+        """Todos los perfiles que ya existen (tienen al menos una billetera
+        creada) -- incluye tanto los configurados a mano en USER_PROFILES
+        como los de registro abierto (perfil = str(user_id), creados solos
+        la primera vez que alguien nuevo le escribe al bot). Se usa para que
+        los jobs automáticos (recordatorio nocturno, reporte semanal) también
+        alcancen a estos últimos, que no están en ningún mapeo fijo del
+        .env -- ver src/main.py: _perfiles_con_user_ids."""
+        rows = self._conn.execute("SELECT DISTINCT perfil FROM wallets").fetchall()
+        return [r[0] for r in rows]
+
     def _ensure_wallets_for_profile(self, perfil: str) -> None:
         """Crea las 4 billeteras del perfil si aún no existen (saldo 0, salvo
         Bs/BDV que arranca con INITIAL_BALANCE la primera vez que se ve ese
