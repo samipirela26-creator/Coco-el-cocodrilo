@@ -28,7 +28,7 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
     tipo = data.get('tipo')
     tipos_validos = (
         'gasto', 'ingreso', 'ajuste_saldo', 'charla', 'transferencia',
-        'diezmo_pagado', 'deuda_nueva', 'deuda_pago',
+        'diezmo_pagado', 'deuda_nueva', 'deuda_pago', 'meta_nueva', 'meta_aporte',
     )
     if tipo not in tipos_validos:
         return False, f"El campo 'tipo' debe ser uno de: {', '.join(tipos_validos)}"
@@ -41,6 +41,9 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
 
     if tipo in ('deuda_nueva', 'deuda_pago'):
         return _validate_deuda(data, tipo)
+
+    if tipo in ('meta_nueva', 'meta_aporte'):
+        return _validate_meta(data, tipo)
 
     if tipo == 'diezmo_pagado':
         moneda = data.get('moneda')
@@ -114,6 +117,36 @@ def _validate_deuda(data: dict, tipo: str) -> Tuple[bool, str]:
             datetime.strptime(fecha, '%Y-%m-%d')
         except ValueError:
             return False, "La fecha debe tener formato YYYY-MM-DD"
+
+    return True, ""
+
+
+def _validate_meta(data: dict, tipo: str) -> Tuple[bool, str]:
+    """Valida la creación de una meta de ahorro (meta_nueva) o un aporte a
+    una meta existente (meta_aporte). No toca 'categoria'/'cuenta' -- usa
+    'nombre_meta' y, para meta_nueva, 'monto_objetivo'."""
+    nombre_meta = data.get('nombre_meta')
+    if not nombre_meta or not isinstance(nombre_meta, str) or not nombre_meta.strip():
+        return False, "Falta el nombre de la meta ('nombre_meta')"
+
+    moneda = data.get('moneda', 'Bs') or 'Bs'
+    if moneda not in MONEDAS_VALIDAS:
+        return False, f"La moneda '{moneda}' no es válida. Use una de: {', '.join(MONEDAS_VALIDAS)}"
+
+    if tipo == 'meta_nueva':
+        try:
+            monto_objetivo = float(data.get('monto_objetivo', 0))
+        except (ValueError, TypeError):
+            return False, "El monto objetivo debe ser un número válido"
+        if monto_objetivo <= 0:
+            return False, "El monto objetivo de la meta debe ser mayor que 0"
+    else:  # meta_aporte
+        try:
+            monto = float(data.get('monto', 0))
+        except (ValueError, TypeError):
+            return False, "El monto del aporte debe ser un número válido"
+        if monto <= 0:
+            return False, "El monto del aporte debe ser mayor que 0"
 
     return True, ""
 

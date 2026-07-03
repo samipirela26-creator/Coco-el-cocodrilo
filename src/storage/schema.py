@@ -168,6 +168,23 @@ class SchemaMixin:
             )
         """)
 
+        # Metas de ahorro (ej. "quiero ahorrar 500 dólares para un viaje"),
+        # aisladas por perfil. A diferencia de gasto/ingreso, NO toca ninguna
+        # billetera: es solo un contador de progreso hacia un objetivo. Ver
+        # SavingsMixin en src/storage/savings.py.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                perfil TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                moneda TEXT NOT NULL,
+                monto_objetivo REAL NOT NULL,
+                monto_actual REAL NOT NULL DEFAULT 0,
+                cumplida INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         # wallets: la clave primaria cambia (ahora incluye perfil), así que si
         # la tabla existe con el esquema viejo (sin perfil) hay que migrarla
         # copiando los datos al perfil legacy en vez de solo agregar la columna.

@@ -50,6 +50,8 @@ Comandos:
 /diezmo - ver su diezmo pendiente (10% de cada ingreso, solo informativo)
 /diezmo_pagado [moneda] - marcar el diezmo como pagado (o dígame "ya pagué el diezmo")
 /deudas - ver deudas y préstamos informales pendientes (quién le debe, a quién le debe)
+/metas - ver progreso de sus metas de ahorro
+/meta_nueva <moneda> <monto> <nombre> - crear una meta de ahorro nueva
 /help - ver categorías y ayuda"""
 
 
@@ -88,6 +90,12 @@ En USD, si no menciona Binance/USDT/cripto, asumo que es Efectivo.
   de la deuda más vieja a la más nueva)
 No toca ninguna billetera -- es solo un registro de quién le debe a quién.
 
+🎯 Metas de ahorro:
+• "Quiero ahorrar 500 dólares para un viaje" -> crea la meta con ese objetivo
+• "Aporté 50 dólares a mi meta del viaje" -> anota el progreso hacia el objetivo
+Tampoco toca ninguna billetera -- el dinero ya debe estar en alguna de sus cuentas,
+esto solo lleva la cuenta de cuánto lleva ahorrado para ese objetivo.
+
 Comandos:
 /menu - botones rápidos (saldo, resumen, cambio, ayuda), también escribiendo "menu"
 /saldo - su saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de sus Bs
@@ -106,4 +114,7 @@ Comandos:
 /diezmo_pagado [Bs/USD/COP] - marca el diezmo como pagado (todo, o solo esa moneda);
   también puede decirme "ya pagué el diezmo" por texto, voz o una captura de la transferencia
 /deudas - resumen neto de deudas/préstamos informales por persona y moneda (no toca
-  ninguna billetera; dígame "le presté X a [persona]" o "[persona] me pagó" para registrar)"""
+  ninguna billetera; dígame "le presté X a [persona]" o "[persona] me pagó" para registrar)
+/metas - progreso de sus metas de ahorro activas
+/meta_nueva <moneda> <monto> <nombre> - crea una meta de ahorro (ej: /meta_nueva USD 500 viaje);
+  también puede decirme "quiero ahorrar X para [algo]" y "aporté X a mi meta de [algo]" """

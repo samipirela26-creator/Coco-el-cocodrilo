@@ -156,6 +156,36 @@ def format_deuda_pago_message(resultado: dict, persona: str, moneda: str, respue
     return '\n'.join(lines) + _coco_line(respuesta)
 
 
+def _barra_progreso(porcentaje: float, ancho: int = 10) -> str:
+    llenos = min(int(round(porcentaje / 100 * ancho)), ancho)
+    return "🟩" * llenos + "⬜" * (ancho - llenos)
+
+
+def format_meta_nueva_message(nombre: str, moneda: str, monto_objetivo: float, respuesta: str = "") -> str:
+    """Confirmación al crear una meta de ahorro nueva (ver SavingsMixin.create_goal)."""
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    return f"""✅ Meta de ahorro creada
+
+🎯 {nombre}
+Objetivo: {simbolo} {monto_objetivo:,.2f} {moneda}
+{_barra_progreso(0)} 0%""" + _coco_line(respuesta)
+
+
+def format_meta_aporte_message(resultado: dict, respuesta: str = "") -> str:
+    """Confirmación al aportar a una meta de ahorro existente (ver
+    SavingsMixin.contribute_goal). Si `resultado["encontrada"]` es False, la
+    meta no existe -- llamador debe mostrar un mensaje aparte en ese caso."""
+    simbolo = MONEDA_SIMBOLO.get(resultado['moneda'], '')
+    porcentaje = round(min(resultado['monto_actual'] / resultado['monto_objetivo'], 1.0) * 100, 1) \
+        if resultado['monto_objetivo'] > 0 else 0.0
+    linea_cumplida = "\n\n🎉 ¡Meta cumplida!" if resultado['cumplida'] else ""
+    return f"""✅ Aporte registrado
+
+🎯 {resultado['nombre']}
+{simbolo} {resultado['monto_actual']:,.2f} / {resultado['monto_objetivo']:,.2f} {resultado['moneda']}
+{_barra_progreso(porcentaje)} {porcentaje}%{linea_cumplida}""" + _coco_line(respuesta)
+
+
 def format_transferencia_message(resultado: dict, respuesta: str = "", tasa_cambio: float = None) -> str:
     simbolo_o = MONEDA_SIMBOLO.get(resultado['moneda_origen'], '')
     simbolo_d = MONEDA_SIMBOLO.get(resultado['moneda_destino'], '')

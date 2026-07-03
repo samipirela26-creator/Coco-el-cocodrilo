@@ -19,6 +19,7 @@ from src.bot.formatters import (
     format_confirmation_message, format_ajuste_message, format_ajuste_preview_message,
     format_transferencia_message, format_diezmo_pagado_message,
     format_deuda_nueva_message, format_deuda_pago_message,
+    format_meta_nueva_message, format_meta_aporte_message,
 )
 from src.bot.replies import (
     _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard,
@@ -192,6 +193,30 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
             moneda=moneda, monto=float(data.get('monto') or 0),
         )
         mensaje = format_deuda_pago_message(resultado, data['persona'], moneda, data.get('respuesta'))
+        await _reply(update, f"{prefix}{mensaje}")
+        return
+
+    if data['tipo'] == 'meta_nueva':
+        db.create_goal(
+            perfil=perfil, nombre=data['nombre_meta'], moneda=moneda,
+            monto_objetivo=float(data['monto_objetivo']),
+        )
+        mensaje = format_meta_nueva_message(
+            data['nombre_meta'], moneda, float(data['monto_objetivo']), data.get('respuesta')
+        )
+        await _reply(update, f"{prefix}{mensaje}")
+        return
+
+    if data['tipo'] == 'meta_aporte':
+        resultado = db.contribute_goal(perfil, data['nombre_meta'], float(data['monto']))
+        if not resultado.get('encontrada'):
+            await _reply(
+                update,
+                f"{prefix}🐊 No encontré ninguna meta activa llamada \"{data['nombre_meta']}\". "
+                f"¿Quiere que la cree con /meta_nueva o diciéndome el objetivo?"
+            )
+            return
+        mensaje = format_meta_aporte_message(resultado, data.get('respuesta'))
         await _reply(update, f"{prefix}{mensaje}")
         return
 

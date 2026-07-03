@@ -611,6 +611,69 @@ async def deudas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, '\n'.join(lines).rstrip())
 
 
+async def meta_nueva_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/meta_nueva <moneda> <monto> <nombre> -- crea una meta de ahorro DE
+    FORMA DELIBERADA (equivalente por comando a decirle "quiero ahorrar X
+    para [nombre]" por texto/voz)."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    args = context.args
+    if len(args) < 3:
+        await _reply(
+            update,
+            "🐊 Uso: /meta_nueva <moneda: Bs/USD/COP> <monto objetivo> <nombre de la meta>\n"
+            "Ej: /meta_nueva USD 500 viaje"
+        )
+        return
+    moneda_raw = args[0].strip().lower()
+    mapa_moneda = {'bs': 'Bs', 'usd': 'USD', 'cop': 'COP'}
+    moneda = mapa_moneda.get(moneda_raw)
+    if not moneda:
+        await _reply(update, "🐊 Moneda no reconocida. Use Bs, USD o COP.")
+        return
+    try:
+        monto_objetivo = float(args[1].replace(',', '.'))
+        if monto_objetivo <= 0:
+            raise ValueError
+    except ValueError:
+        await _reply(update, "🐊 El monto objetivo debe ser un número mayor que 0.")
+        return
+    nombre = " ".join(args[2:]).strip()
+    if not nombre:
+        await _reply(update, "🐊 Necesito un nombre para la meta.")
+        return
+    try:
+        db.create_goal(perfil, nombre, moneda, monto_objetivo)
+        simbolo = MONEDA_SIMBOLO.get(moneda, '')
+        await _reply(update, f"✨ Meta creada: {nombre} -- objetivo {simbolo} {monto_objetivo:,.2f} {moneda}.")
+    except StorageError as e:
+        await _reply(update, f"❌ Error al crear la meta: {e}")
+
+
+async def metas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el progreso de las metas de ahorro activas -- ver
+    SavingsMixin.list_goals. No toca ninguna billetera."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    metas = db.list_goals(perfil)
+    if not metas:
+        await _reply(
+            update,
+            "🐊 No tiene metas de ahorro activas. Dígame algo como \"quiero ahorrar 500 "
+            "dólares para un viaje\" o use /meta_nueva."
+        )
+        return
+    lines = ["🎯 Sus metas de ahorro:\n"]
+    for m in metas:
+        simbolo = MONEDA_SIMBOLO.get(m['moneda'], '')
+        lines.append(f"• {m['nombre']}: {simbolo} {m['monto_actual']:,.2f} / {m['monto_objetivo']:,.2f} {m['moneda']} ({m['porcentaje']}%)")
+    await _reply(update, '\n'.join(lines))
+
+
 async def racha_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Muestra la racha de días consecutivos registrando movimientos (hasta
     ahora solo visible dentro de /saldo)."""
