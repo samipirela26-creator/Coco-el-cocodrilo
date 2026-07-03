@@ -41,6 +41,7 @@ Comandos:
 /saldo - ver su saldo (BDV, Binance, y Efectivo con USD + COP juntos)
 /resumen - ver gastos del mes por categoría (con porcentajes)
 /saldo_inicial <monto> [moneda] [cuenta] - configurar el saldo de una billetera
+/cuenta_nueva <moneda> <nombre> - abrir una cuenta nueva (ej: otro banco además de BDV)
 /cambio - ver tasas BCV y Binance
 /exportar - descargar un respaldo CSV de todos sus movimientos
 /deshacer - revertir el último gasto o ingreso registrado
@@ -66,6 +67,10 @@ ej: "Gasto de Gio", "Comida en la calle".)
 • Binance (USD) — sus dólares digitales/USDT
 • Efectivo — dólares y pesos (COP) en cash, juntos en /saldo con el
   equivalente combinado en cada moneda (tasa fija: {fx.COP_PER_USD:,.0f} COP = 1 USD)
+• Si tiene MÁS cuentas (ej. otro banco además de BDV, o Zelle además de
+  Binance), le abro una nueva con /cuenta_nueva o, si de una vez me dice
+  "tengo X en [nombre de cuenta]" y no la reconozco, le pregunto si quiere
+  que la abra antes de guardar nada
 
 📝 Cómo usarme:
 Envíeme un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, por ejemplo:
@@ -82,6 +87,7 @@ Comandos:
 /resumen [mes] - resumen y % de gasto por categoría del mes actual (o YYYY-MM)
 /saldo_inicial <monto> [moneda] [cuenta] - fija el saldo de una billetera
   (moneda: Bs/USD/COP; cuenta obligatoria si moneda es USD: Binance o Efectivo)
+/cuenta_nueva <moneda> <nombre> - abre una cuenta personalizada (ej: /cuenta_nueva Bs Mercantil)
 /cambio - tasas BCV, Binance y USD->COP
 /exportar - descargar un CSV con todo su historial (respaldo manual)
 /deshacer - revierte el último gasto/ingreso, por si algo se registró mal

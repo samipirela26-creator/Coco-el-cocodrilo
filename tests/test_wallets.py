@@ -62,3 +62,38 @@ def test_transfer_misma_billetera_no_hace_nada(db):
 def test_perfiles_tienen_billeteras_independientes(db):
     db.set_wallet_balance("juan", "COP", "Efectivo", 50000.0)
     assert db.get_wallet_balance("maria", "COP", "Efectivo") == 0.0
+
+
+def test_create_account_agrega_cuenta_personalizada(db):
+    creada = db.create_account("juan", "Bs", "Mercantil", 300.0)
+    assert creada is True
+    assert db.get_wallet_balance("juan", "Bs", "Mercantil") == 300.0
+    cuentas = {(w["moneda"], w["cuenta"]) for w in db.get_all_wallets("juan")}
+    assert ("Bs", "Mercantil") in cuentas
+
+
+def test_create_account_no_duplica_por_mayusculas(db):
+    db.create_account("juan", "Bs", "Mercantil", 100.0)
+    creada_de_nuevo = db.create_account("juan", "Bs", "mercantil", 999.0)
+    assert creada_de_nuevo is False
+    # El saldo original no debe haberse tocado -- el segundo intento no hizo nada.
+    assert db.get_wallet_balance("juan", "Bs", "Mercantil") == 100.0
+
+
+def test_find_matching_cuenta_ignora_mayusculas_y_espacios(db):
+    db.create_account("juan", "USD", "Zelle", 50.0)
+    assert db.find_matching_cuenta("juan", "USD", "  zelle ") == "Zelle"
+    assert db.find_matching_cuenta("juan", "USD", "Otra") is None
+
+
+def test_resolve_cuenta_perfil_usa_cuenta_personalizada_existente(db):
+    db.create_account("juan", "Bs", "Mercantil", 0.0)
+    db.set_wallet_balance("juan", "Bs", "mercantil", 250.0)  # distinta capitalización
+    assert db.get_wallet_balance("juan", "Bs", "Mercantil") == 250.0
+
+
+def test_resolve_cuenta_perfil_sin_match_cae_al_default_fijo(db):
+    # "Provincial" no existe todavia como cuenta -> debe caer a BDV (default de Bs),
+    # igual que el comportamiento clásico de resolve_cuenta().
+    cuenta_resuelta = db.resolve_cuenta_perfil("juan", "Bs", "Provincial")
+    assert cuenta_resuelta == "BDV"

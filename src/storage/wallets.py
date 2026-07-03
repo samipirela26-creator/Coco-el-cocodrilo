@@ -50,8 +50,8 @@ class WalletsMixin:
     def get_wallet_balance(self, perfil: str, moneda: str, cuenta: str = None) -> float:
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
-        cuenta = resolve_cuenta(moneda, cuenta)
         self._ensure_wallets_for_profile(perfil)
+        cuenta = self.resolve_cuenta_perfil(perfil, moneda, cuenta)
         row = self._conn.execute(
             "SELECT balance FROM wallets WHERE perfil = ? AND moneda = ? AND cuenta = ?",
             (perfil, moneda, cuenta)
@@ -59,13 +59,82 @@ class WalletsMixin:
         return float(row[0]) if row else 0.0
 
     def get_all_wallets(self, perfil: str) -> list:
-        """Retorna las 4 billeteras del perfil: [{"moneda": str, "cuenta": str, "balance": float}, ...]."""
+        """Retorna TODAS las billeteras del perfil (las 4 fijas + cualquier
+        cuenta personalizada creada con /cuenta_nueva o de forma automática):
+        [{"moneda": str, "cuenta": str, "balance": float}, ...]."""
         self._ensure_wallets_for_profile(perfil)
         rows = self._conn.execute(
             "SELECT moneda, cuenta, balance FROM wallets WHERE perfil = ? ORDER BY moneda, cuenta",
             (perfil,)
         ).fetchall()
         return [{"moneda": m, "cuenta": c, "balance": b} for m, c, b in rows]
+
+    def get_known_cuentas(self, perfil: str, moneda: str) -> list:
+        """Nombres de todas las cuentas que ya existen para este perfil+moneda
+        (las fijas y cualquier personalizada). Se usa para decidir si una
+        cuenta mencionada en un mensaje es una ya conocida (aunque con
+        mayúsculas/espacios distintos) o una realmente nueva."""
+        self._ensure_wallets_for_profile(perfil)
+        rows = self._conn.execute(
+            "SELECT cuenta FROM wallets WHERE perfil = ? AND moneda = ?", (perfil, moneda)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def find_matching_cuenta(self, perfil: str, moneda: str, cuenta: str) -> str:
+        """Busca, sin importar mayúsculas/espacios, si `cuenta` ya corresponde
+        a una billetera existente de este perfil+moneda (fija o personalizada)
+        -- para no crear duplicados por variaciones de tipeo ("mercantil" vs
+        "Mercantil"). Retorna el nombre EXACTO guardado si hay match, o None
+        si de verdad parece una cuenta nueva."""
+        if not cuenta:
+            return None
+        objetivo = cuenta.strip().lower()
+        if not objetivo:
+            return None
+        for existente in self.get_known_cuentas(perfil, moneda):
+            if existente.strip().lower() == objetivo:
+                return existente
+        return None
+
+    def resolve_cuenta_perfil(self, perfil: str, moneda: str, cuenta: str = None) -> str:
+        """Como resolve_cuenta() (src/storage/constants.py), pero primero
+        intenta encontrar una cuenta PERSONALIZADA ya existente de este
+        perfil que matchee por nombre -- así, una vez creada una cuenta nueva
+        (con /cuenta_nueva o confirmada al detectarla en un ajuste de saldo),
+        gastos/ingresos/transferencias/ajustes que la mencionen por nombre
+        caen en ella en vez de ser forzados a la cuenta fija por defecto de
+        esa moneda. Si no hay match, cae al comportamiento fijo de siempre."""
+        if moneda not in MONEDAS_VALIDAS:
+            moneda = 'Bs'
+        match = self.find_matching_cuenta(perfil, moneda, cuenta) if cuenta else None
+        if match:
+            return match
+        return resolve_cuenta(moneda, cuenta)
+
+    def create_account(self, perfil: str, moneda: str, cuenta: str, saldo_inicial: float = 0.0) -> bool:
+        """Crea una billetera personalizada nueva DEL PERFIL dado (ej: una
+        segunda cuenta bancaria en Bs, o un tercer bolsillo en USD) -- a
+        diferencia de las 4 fijas de WALLETS, estas se crean bajo demanda: de
+        forma deliberada con /cuenta_nueva, o automática (con confirmación
+        del usuario) cuando menciona una cuenta que Coco no reconoce todavía
+        (ver _pedir_confirmacion_ajuste en src/bot/handlers.py). Retorna False
+        sin hacer nada si ya existe una cuenta con ese nombre (sin importar
+        mayúsculas) para esa moneda."""
+        if moneda not in MONEDAS_VALIDAS:
+            moneda = 'Bs'
+        cuenta = (cuenta or "").strip()
+        if not cuenta:
+            return False
+        self._ensure_wallets_for_profile(perfil)
+        if self.find_matching_cuenta(perfil, moneda, cuenta):
+            return False
+        self._conn.execute(
+            "INSERT INTO wallets (perfil, moneda, cuenta, balance, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (perfil, moneda, cuenta, saldo_inicial, datetime.now().isoformat())
+        )
+        self._conn.commit()
+        logger.info(f"Cuenta nueva creada [{perfil}]: {moneda}/{cuenta} (saldo inicial {saldo_inicial})")
+        return True
 
     def set_wallet_balance(self, perfil: str, moneda: str, cuenta: str, monto: float,
                             fuente: str = 'comando') -> tuple:
@@ -79,7 +148,7 @@ class WalletsMixin:
         Retorna (cuenta_resuelta, saldo_anterior)."""
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
-        cuenta = resolve_cuenta(moneda, cuenta)
+        cuenta = self.resolve_cuenta_perfil(perfil, moneda, cuenta)
         self._ensure_wallets_for_profile(perfil)
         try:
             anterior = self.get_wallet_balance(perfil, moneda, cuenta)
@@ -119,8 +188,8 @@ class WalletsMixin:
             moneda_origen = 'Bs'
         if moneda_destino not in MONEDAS_VALIDAS:
             moneda_destino = 'Bs'
-        cuenta_origen = resolve_cuenta(moneda_origen, cuenta_origen)
-        cuenta_destino = resolve_cuenta(moneda_destino, cuenta_destino)
+        cuenta_origen = self.resolve_cuenta_perfil(perfil, moneda_origen, cuenta_origen)
+        cuenta_destino = self.resolve_cuenta_perfil(perfil, moneda_destino, cuenta_destino)
         self._ensure_wallets_for_profile(perfil)
         try:
             anterior_origen = self.get_wallet_balance(perfil, moneda_origen, cuenta_origen)

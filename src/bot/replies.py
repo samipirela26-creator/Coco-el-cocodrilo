@@ -41,6 +41,17 @@ def _saldo_confirm_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+def _cuenta_nueva_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Botones para confirmar/cancelar la apertura de una cuenta que Coco no
+    reconoce todavía (ej: "tengo 500 en Mercantil" cuando solo existían BDV/
+    Binance/Efectivo) -- ver _cuenta_es_nueva y cuenta_nueva_callback en
+    handlers.py."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, abrir cuenta", callback_data="coco_cuentanueva:si"),
+        InlineKeyboardButton("❌ No, cancelar", callback_data="coco_cuentanueva:no"),
+    ]])
+
+
 def _deshacer_keyboard() -> InlineKeyboardMarkup:
     """Botón bajo cada confirmación de gasto/ingreso para deshacer sin tener
     que escribir /deshacer. Siempre deshace el ÚLTIMO movimiento del perfil

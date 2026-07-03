@@ -18,9 +18,11 @@ from src.bot.commands import (
     presupuesto_command, racha_command, menu_command, menu_callback,
     resumen_nav_callback, deshacer_callback, diezmo_command, diezmo_pagado_command,
     bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
+    cuenta_nueva_command,
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
+    cuenta_nueva_callback,
 )
 
 logger = None
@@ -148,6 +150,7 @@ COMANDOS_PUBLICOS = [
     BotCommand("diezmo_pagado", "Marcar el diezmo como pagado"),
     BotCommand("deshacer", "Deshacer su último gasto/ingreso"),
     BotCommand("saldo_inicial", "Fijar su saldo inicial en Bs"),
+    BotCommand("cuenta_nueva", "Abrir una cuenta nueva (ej: otro banco)"),
     BotCommand("exportar", "Exportar sus movimientos a CSV"),
     BotCommand("help", "Ver la ayuda completa"),
 ]
@@ -231,12 +234,14 @@ def main():
         application.add_handler(CommandHandler("bloquear", bloquear_command))
         application.add_handler(CommandHandler("desbloquear", desbloquear_command))
         application.add_handler(CommandHandler("bloqueados", bloqueados_command))
+        application.add_handler(CommandHandler("cuenta_nueva", cuenta_nueva_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))
+        application.add_handler(CallbackQueryHandler(cuenta_nueva_callback, pattern=r"^coco_cuentanueva:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )

@@ -145,6 +145,15 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             lines.append("")
             lines.append(f"🌎 Total aprox. en USD (BDV a tasa Binance + Binance + Efectivo): $ {total_usd:,.2f}")
 
+        fijas = {('Bs', 'BDV'), ('USD', 'Binance'), ('USD', 'Efectivo'), ('COP', 'Efectivo')}
+        personalizadas = [w for w in db.get_all_wallets(perfil) if (w['moneda'], w['cuenta']) not in fijas]
+        if personalizadas:
+            lines.append("")
+            lines.append("🏦 Otras cuentas:")
+            for w in personalizadas:
+                simbolo = MONEDA_SIMBOLO.get(w['moneda'], '')
+                lines.append(f"   ↳ {w['cuenta']} ({w['moneda']}): {simbolo} {w['balance']:,.2f}")
+
         racha = db.get_current_streak(perfil)
         if racha > 0:
             lines.append("")
@@ -171,6 +180,45 @@ async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _reply_photo(update, image_bytes, caption="💰 Su saldo actual")
     except StorageError as e:
         await _reply(update, f"❌ Error al consultar el saldo: {e}")
+
+
+async def cuenta_nueva_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Abre una cuenta nueva DE FORMA DELIBERADA (a diferencia de la
+    creación automática con confirmación cuando se menciona una cuenta
+    desconocida en un ajuste de saldo -- ver _pedir_confirmacion_ajuste en
+    handlers.py). Útil para quien tiene varias cuentas del mismo banco (ej.
+    Mercantil además de BDV) y quiere abrirla sin tener que "reportar" un
+    saldo primero."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    args = context.args
+    if len(args) < 2:
+        await _reply(
+            update,
+            "🐊 Uso: /cuenta_nueva <moneda: Bs/USD/COP> <nombre de la cuenta>\n"
+            "Ej: /cuenta_nueva Bs Mercantil"
+        )
+        return
+    moneda_raw = args[0].strip().lower()
+    mapa_moneda = {'bs': 'Bs', 'usd': 'USD', 'cop': 'COP'}
+    moneda = mapa_moneda.get(moneda_raw)
+    if not moneda:
+        await _reply(update, "🐊 Moneda no reconocida. Use Bs, USD o COP.")
+        return
+    nombre = " ".join(args[1:]).strip()
+    if not nombre:
+        await _reply(update, "🐊 Necesito un nombre para la cuenta.")
+        return
+    try:
+        creada = db.create_account(perfil, moneda, nombre, 0.0)
+        if creada:
+            await _reply(update, f"✨ Cuenta abierta: {nombre} ({moneda}), saldo inicial 0.00.")
+        else:
+            await _reply(update, f"🐊 Ya existe una cuenta \"{nombre}\" en {moneda}.")
+    except StorageError as e:
+        await _reply(update, f"❌ Error al abrir la cuenta: {e}")
 
 
 async def saldo_inicial_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

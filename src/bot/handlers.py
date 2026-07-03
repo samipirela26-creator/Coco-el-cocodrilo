@@ -19,12 +19,32 @@ from src.bot.formatters import (
     format_confirmation_message, format_ajuste_message, format_ajuste_preview_message,
     format_transferencia_message, format_diezmo_pagado_message,
 )
-from src.bot.replies import _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard
+from src.bot.replies import (
+    _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard,
+    _cuenta_nueva_confirm_keyboard,
+)
 from src.bot.constants import MONEDA_SIMBOLO
-from src.storage.constants import resolve_cuenta
+from src.storage.constants import resolve_cuenta, CUENTAS_POR_MONEDA
 from src.bot.commands import menu_command, _maybe_welcome_new_profile
 
 logger = logging.getLogger('gastos-bot')
+
+
+def _cuenta_es_nueva(db: DBClient, perfil: str, moneda: str, cuenta: str) -> bool:
+    """True si `cuenta` no coincide (ni por may/min) con ninguna cuenta ya
+    conocida de este perfil+moneda -- ni una de las fijas (BDV/Binance/
+    Efectivo) ni una personalizada creada antes. Sirve para decidir si hay
+    que ofrecer crearla en vez de forzarla silenciosamente a la cuenta por
+    defecto de esa moneda (ver resolve_cuenta en constants.py)."""
+    cuenta = (cuenta or "").strip()
+    if not cuenta:
+        return False
+    if db.find_matching_cuenta(perfil, moneda, cuenta):
+        return False
+    fijas = CUENTAS_POR_MONEDA.get(moneda, ())
+    if cuenta.lower() in (v.lower() for v in fijas):
+        return False
+    return True
 
 
 async def _pedir_confirmacion_ajuste(context: ContextTypes.DEFAULT_TYPE, update: Update, db: DBClient,
@@ -35,8 +55,28 @@ async def _pedir_confirmacion_ajuste(context: ContextTypes.DEFAULT_TYPE, update:
     ver format_ajuste_preview_message. Guarda los datos pendientes en
     `context.user_data` hasta que llegue la respuesta del botón (ver
     saldo_callback). Compartido por texto/voz (ajuste_saldo) y fotos
-    (captura_tipo == 'saldo')."""
-    cuenta_resuelta = resolve_cuenta(moneda, cuenta)
+    (captura_tipo == 'saldo').
+
+    Si `cuenta` no coincide con ninguna cuenta conocida de este perfil (ej.
+    "Mercantil" cuando solo existen BDV/Binance/Efectivo), en vez de forzarla
+    a la cuenta por defecto se ofrece crearla como cuenta nueva -- ver
+    _cuenta_es_nueva y cuenta_nueva_callback."""
+    if _cuenta_es_nueva(db, perfil, moneda, cuenta):
+        cuenta_limpia = cuenta.strip()
+        context.user_data['pending_cuenta_nueva'] = {
+            'perfil': perfil, 'moneda': moneda, 'cuenta': cuenta_limpia,
+            'monto': monto, 'fuente': fuente, 'respuesta': respuesta,
+        }
+        simbolo = MONEDA_SIMBOLO.get(moneda, '')
+        mensaje = (
+            f"🐊 No tengo registrada la cuenta \"{cuenta_limpia}\" en {moneda}. "
+            f"¿Desea que la abra y le asigne ese saldo?\n\n"
+            f"🏦 {cuenta_limpia} ({moneda}): {simbolo} {monto:,.2f}"
+        )
+        await _reply(update, f"{prefix}{mensaje}", reply_markup=_cuenta_nueva_confirm_keyboard())
+        return
+
+    cuenta_resuelta = db.resolve_cuenta_perfil(perfil, moneda, cuenta)
     anterior = db.get_wallet_balance(perfil, moneda, cuenta_resuelta)
     context.user_data['pending_ajuste'] = {
         'perfil': perfil, 'moneda': moneda, 'cuenta': cuenta_resuelta,
@@ -44,6 +84,37 @@ async def _pedir_confirmacion_ajuste(context: ContextTypes.DEFAULT_TYPE, update:
     }
     mensaje = format_ajuste_preview_message(moneda, cuenta_resuelta, anterior, monto, respuesta)
     await _reply(update, f"{prefix}{mensaje}", reply_markup=_saldo_confirm_keyboard())
+
+
+async def cuenta_nueva_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de confirmación de una cuenta nueva detectada automáticamente
+    (ver _pedir_confirmacion_ajuste): solo AHORA se crea la cuenta y se le
+    asigna el saldo, o se descarta si el usuario dijo que no (en ese caso no
+    se toca nada -- ni se crea la cuenta ni se fuerza el monto a otra)."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_cuenta_nueva', None)
+    await query.answer()
+    if decision != "si" or not pending:
+        try:
+            await query.edit_message_text("🐊 Entendido, no abrí ninguna cuenta nueva.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
+    try:
+        db.create_account(pending['perfil'], pending['moneda'], pending['cuenta'], 0.0)
+        cuenta_resuelta, anterior = db.set_wallet_balance(
+            pending['perfil'], pending['moneda'], pending['cuenta'], pending['monto'], fuente=pending['fuente']
+        )
+        mensaje = format_ajuste_message(pending['moneda'], cuenta_resuelta, anterior, pending['monto'], pending.get('respuesta'))
+        await query.edit_message_text(f"✨ Cuenta nueva abierta.\n\n{mensaje}")
+    except StorageError as e:
+        await query.edit_message_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
 
 
 async def saldo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

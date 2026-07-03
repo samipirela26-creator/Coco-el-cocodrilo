@@ -26,8 +26,8 @@ class TransactionsMixin:
         el usuario escribió)."""
         if moneda not in MONEDAS_VALIDAS:
             moneda = 'Bs'
-        cuenta = resolve_cuenta(moneda, cuenta)
         self._ensure_wallets_for_profile(perfil)
+        cuenta = self.resolve_cuenta_perfil(perfil, moneda, cuenta)
         try:
             self._conn.execute(
                 """INSERT INTO transactions
