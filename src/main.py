@@ -5,7 +5,7 @@ import logging
 import random
 import signal
 import sys
-from telegram import Update
+from telegram import Update, BotCommand, BotCommandScopeChat
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from src.config import Config
 from src.utils.logger import setup_logger
@@ -134,6 +134,53 @@ async def send_weekly_report(context) -> None:
                 logger.error(f"No se pudo enviar el reporte semanal a {user_id} ({perfil}): {e}")
 
 
+# Comandos públicos: visibles para cualquiera en el botón de menú (☰) de
+# Telegram, junto al cuadro de texto -- sin esto, Telegram no sabe qué
+# comandos tiene el bot y ese menú aparece vacío.
+COMANDOS_PUBLICOS = [
+    BotCommand("menu", "Ver el menú con botones"),
+    BotCommand("saldo", "Ver sus saldos por billetera"),
+    BotCommand("resumen", "Resumen del mes (gastos por categoría)"),
+    BotCommand("cambio", "Tasas de cambio actuales (BCV/paralelo)"),
+    BotCommand("presupuesto", "Fijar o ver topes mensuales por categoría"),
+    BotCommand("racha", "Ver sus días seguidos registrando"),
+    BotCommand("diezmo", "Ver diezmo pendiente"),
+    BotCommand("diezmo_pagado", "Marcar el diezmo como pagado"),
+    BotCommand("deshacer", "Deshacer su último gasto/ingreso"),
+    BotCommand("saldo_inicial", "Fijar su saldo inicial en Bs"),
+    BotCommand("exportar", "Exportar sus movimientos a CSV"),
+    BotCommand("help", "Ver la ayuda completa"),
+]
+
+# Comandos solo del dueño (bloquear/desbloquear) -- se registran SOLO en su
+# chat privado (BotCommandScopeChat), para que no aparezcan en el menú de
+# nadie más (ver src/bot/commands.py:_es_dueno, el chequeo real de permiso
+# vive ahí -- esto es solo para que el menú no los muestre a otros).
+COMANDOS_DUENO = [
+    BotCommand("bloquear", "Bloquear a un usuario por su user_id"),
+    BotCommand("desbloquear", "Desbloquear a un usuario"),
+    BotCommand("bloqueados", "Ver la lista de usuarios bloqueados"),
+]
+
+
+async def _post_init(application) -> None:
+    """Registra los comandos con Telegram (setMyCommands) al arrancar, para
+    que el botón de menú (☰) de Telegram los muestre. Se corre una sola vez
+    al iniciar -- Telegram guarda esta lista del lado suyo, así que no hace
+    falta repetirlo en cada mensaje."""
+    await application.bot.set_my_commands(COMANDOS_PUBLICOS)
+    owner_id = application.bot_data.get("owner_user_id")
+    if owner_id:
+        try:
+            await application.bot.set_my_commands(
+                COMANDOS_PUBLICOS + COMANDOS_DUENO,
+                scope=BotCommandScopeChat(chat_id=owner_id),
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo registrar el menú de comandos del dueño: {e}")
+    logger.info("Menú de comandos (☰) registrado en Telegram.")
+
+
 def main():
     global logger
     try:
@@ -157,7 +204,7 @@ def main():
         )
 
         logger.info("Configurando bot de Telegram...")
-        application = Application.builder().token(config.telegram_bot_token).build()
+        application = Application.builder().token(config.telegram_bot_token).post_init(_post_init).build()
 
         application.bot_data["llm_connector"] = llm_client
         application.bot_data["db"] = db
