@@ -48,6 +48,7 @@ from src.storage.transactions import TransactionsMixin
 from src.storage.budgets import BudgetsMixin
 from src.storage.tithes import TithesMixin
 from src.storage.fx_cache import FxCacheMixin
+from src.storage.access_control import AccessControlMixin
 # Re-exportados por compatibilidad: código previo podía importar estos
 # nombres directamente desde `src.storage.db`.
 from src.storage.constants import (  # noqa: F401
@@ -58,7 +59,8 @@ from src.storage.constants import (  # noqa: F401
 logger = logging.getLogger('gastos-bot')
 
 
-class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, TithesMixin, FxCacheMixin):
+class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, TithesMixin, FxCacheMixin,
+                AccessControlMixin):
     """Cliente para leer/escribir transacciones y billeteras en SQLite.
 
     Todos los métodos que tocan datos financieros reciben un `perfil` (str)
@@ -72,6 +74,14 @@ class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, Tithe
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._init_schema(fixed_categories or [])
+            if db_path != ':memory:' and os.path.exists(db_path):
+                # Datos financieros: nunca deben quedar legibles por otras
+                # cuentas del sistema (defensa en profundidad además de los
+                # permisos del home -- ver auditoría de seguridad).
+                try:
+                    os.chmod(db_path, 0o600)
+                except OSError:
+                    pass
             logger.info(f"Base de datos SQLite lista en: {db_path}")
         except sqlite3.Error as e:
             raise StorageError(f"No se pudo inicializar la base de datos: {e}")
@@ -89,6 +99,7 @@ class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, Tithe
         reintenta el mismo día)."""
         hoy = datetime.date.today().isoformat()
         os.makedirs(carpeta, exist_ok=True)
+        os.chmod(carpeta, 0o700)  # datos financieros: solo el dueño del proceso puede leer la carpeta
         destino = os.path.join(carpeta, f"gastos-{hoy}.db")
         if os.path.exists(destino):
             return False
@@ -97,6 +108,7 @@ class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, Tithe
             self._conn.backup(respaldo)
         finally:
             respaldo.close()
+        os.chmod(destino, 0o600)  # el respaldo no debe quedar legible por otras cuentas del sistema
         viejos = sorted(
             f for f in os.listdir(carpeta)
             if f.startswith("gastos-") and f.endswith(".db")

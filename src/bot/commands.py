@@ -9,7 +9,7 @@ import io
 import logging
 from datetime import datetime
 import calendar
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from src.storage.db import DBClient
 from src.services import fx
@@ -550,3 +550,87 @@ async def racha_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     dia_str = "día" if racha == 1 else "días"
     await _reply(update, f"🔥 Lleva {racha} {dia_str} seguido{'s' if racha != 1 else ''} registrando con Coco. Así se hace.")
+
+
+def _es_dueno(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """True solo si quien escribe es el dueño del bot (OWNER_USER_ID en
+    .env). /bloquear, /desbloquear y /bloqueados son SOLO para el dueño --
+    con el bot en acceso abierto, nadie más debe poder bloquear a otros."""
+    owner_id = context.bot_data.get('owner_user_id')
+    return owner_id is not None and update.effective_user.id == owner_id
+
+
+async def bloquear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/bloquear <user_id> -- antes de bloquear, muestra el nombre que Coco
+    tiene registrado para ese user_id (ver known_users/track_user) y pide
+    confirmación con botones, para no bloquear a la persona equivocada por
+    escribir mal un número."""
+    if not _es_dueno(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    args = context.args if hasattr(context, 'args') else []
+    if not args or not args[0].isdigit():
+        await _reply(update, "Uso: /bloquear <user_id>\nEj: /bloquear 123456789\n"
+                              "Si no sabe el ID, revise /bloqueados o el aviso que le llegó cuando esa persona escribió por primera vez.")
+        return
+    user_id = int(args[0])
+    if user_id == update.effective_user.id:
+        await _reply(update, "🐊 Ese es su propio user_id -- no puede bloquearse a sí mismo.")
+        return
+    conocido = db.get_known_user(user_id)
+    nombre = conocido["nombre"] if conocido else "(nunca le ha escrito a Coco)"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, bloquear", callback_data=f"coco_bloquear:si:{user_id}"),
+        InlineKeyboardButton("❌ Cancelar", callback_data="coco_bloquear:no"),
+    ]])
+    await _reply(
+        update,
+        f"¿Bloquear a *{nombre}* (user_id {user_id})?\nNo podrá volver a usar el bot hasta que lo desbloquee.",
+        reply_markup=keyboard, parse_mode="Markdown",
+    )
+
+
+async def bloquear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _es_dueno(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    partes = query.data.split(":")
+    if partes[1] == "no":
+        await query.edit_message_text("🐊 Cancelado, no bloqueé a nadie.")
+        return
+    user_id = int(partes[2])
+    db: DBClient = context.bot_data['db']
+    conocido = db.get_known_user(user_id)
+    nombre = conocido["nombre"] if conocido else str(user_id)
+    db.block_user(user_id, nombre, blocked_by=update.effective_user.id)
+    await query.edit_message_text(f"🚫 Bloqueado: {nombre} (user_id {user_id}) ya no puede usar a Coco.")
+
+
+async def desbloquear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _es_dueno(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    args = context.args if hasattr(context, 'args') else []
+    if not args or not args[0].isdigit():
+        await _reply(update, "Uso: /desbloquear <user_id>")
+        return
+    user_id = int(args[0])
+    if db.unblock_user(user_id):
+        await _reply(update, f"🐊 Listo, {user_id} ya puede volver a usar el bot.")
+    else:
+        await _reply(update, f"🐊 {user_id} no estaba bloqueado.")
+
+
+async def bloqueados_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _es_dueno(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    bloqueados = db.list_blocked()
+    if not bloqueados:
+        await _reply(update, "🐊 No tiene a nadie bloqueado.")
+        return
+    lines = ["🚫 Usuarios bloqueados:"]
+    for b in bloqueados:
+        lines.append(f"- {b['nombre']} (user_id {b['user_id']})")
+    await _reply(update, '\n'.join(lines))

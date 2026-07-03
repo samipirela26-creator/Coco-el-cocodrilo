@@ -37,10 +37,27 @@ def _check_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 
 def _is_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    user_id = user.id
+
+    db = context.bot_data.get('db')
+    if db is not None:
+        # Un usuario bloqueado a mano (/bloquear) queda afuera SIEMPRE, tenga
+        # o no ALLOWED_USER_IDS configurado -- el bloqueo manda por encima de
+        # la lista de permitidos.
+        if db.is_blocked(user_id):
+            return False
+        # Guarda/actualiza el nombre visible de quien escribe, para que
+        # /bloquear pueda mostrarlo (ver src/storage/access_control.py).
+        try:
+            nombre = user.full_name or user.username or str(user_id)
+            db.track_user(user_id, nombre, _perfil_de(user_id, context))
+        except Exception:
+            pass
+
     allowed = context.bot_data.get('allowed_user_ids') or []
     if not allowed:
         return True
-    user_id = update.effective_user.id
     if user_id in allowed:
         return True
     logger.warning(f"Acceso bloqueado: user_id {user_id} no está en ALLOWED_USER_IDS")

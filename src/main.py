@@ -17,6 +17,7 @@ from src.bot.commands import (
     resumen_command, cambio_command, exportar_command, deshacer_command,
     presupuesto_command, racha_command, menu_command, menu_callback,
     resumen_nav_callback, deshacer_callback, diezmo_command, diezmo_pagado_command,
+    bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback,
@@ -180,10 +181,14 @@ def main():
         application.add_handler(CommandHandler("diezmo", diezmo_command))
         application.add_handler(CommandHandler("diezmo_pagado", diezmo_pagado_command))
         application.add_handler(CommandHandler("menu", menu_command))
+        application.add_handler(CommandHandler("bloquear", bloquear_command))
+        application.add_handler(CommandHandler("desbloquear", desbloquear_command))
+        application.add_handler(CommandHandler("bloqueados", bloqueados_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
+        application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )

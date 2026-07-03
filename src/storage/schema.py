@@ -115,6 +115,35 @@ class SchemaMixin:
             pass
         cur.execute("UPDATE balance_snapshots SET perfil = ? WHERE perfil = ''", (LEGACY_PROFILE,))
 
+        # Últimos datos conocidos de cada user_id de Telegram (nombre visible,
+        # perfil al que pertenece) -- se actualiza en cada mensaje/comando
+        # (ver AccessControlMixin.track_user, llamado desde src/bot/access.py).
+        # Sirve para que /bloquear pueda mostrar el nombre de la persona antes
+        # de bloquear, en vez de bloquear a ciegas por user_id (fácil de
+        # equivocarse con un número).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS known_users (
+                user_id INTEGER PRIMARY KEY,
+                nombre TEXT,
+                perfil TEXT,
+                last_seen TEXT NOT NULL
+            )
+        """)
+
+        # Bloqueo manual de usuarios (ver /bloquear, /desbloquear en
+        # src/bot/commands.py) -- solo el dueño del bot (OWNER_USER_ID) puede
+        # bloquear/desbloquear. Un user_id bloqueado es rechazado en
+        # silencio por _is_allowed (src/bot/access.py), sin importar si
+        # ALLOWED_USER_IDS está vacío (acceso abierto) o no.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                user_id INTEGER PRIMARY KEY,
+                nombre TEXT,
+                blocked_at TEXT NOT NULL,
+                blocked_by INTEGER
+            )
+        """)
+
         # wallets: la clave primaria cambia (ahora incluye perfil), así que si
         # la tabla existe con el esquema viejo (sin perfil) hay que migrarla
         # copiando los datos al perfil legacy en vez de solo agregar la columna.
