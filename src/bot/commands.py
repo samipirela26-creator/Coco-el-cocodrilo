@@ -585,6 +585,32 @@ async def diezmo_pagado_command(update: Update, context: ContextTypes.DEFAULT_TY
     await _reply(update, format_diezmo_pagado_message(pagados))
 
 
+async def deudas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el resumen neto de deudas/préstamos informales (quién le debe
+    a usted y a quién le debe usted), netedado por persona y moneda -- ver
+    DebtsMixin.resumen_deudas. No toca ninguna billetera (es solo un
+    registro informativo de "quién le debe a quién")."""
+    if not _is_allowed(update, context):
+        return
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    resumen = db.resumen_deudas(perfil)
+    if not resumen:
+        await _reply(update, "🐊 No tiene deudas ni préstamos pendientes registrados.")
+        return
+    lines = ["🤝 Deudas y préstamos pendientes:\n"]
+    for persona, monedas in resumen.items():
+        lines.append(f"👤 {persona}")
+        for moneda, neto in monedas.items():
+            simbolo = MONEDA_SIMBOLO.get(moneda, '')
+            if neto > 0:
+                lines.append(f"   ↳ le debe a usted: {simbolo} {neto:,.2f} {moneda}")
+            else:
+                lines.append(f"   ↳ usted le debe: {simbolo} {abs(neto):,.2f} {moneda}")
+        lines.append("")
+    await _reply(update, '\n'.join(lines).rstrip())
+
+
 async def racha_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Muestra la racha de días consecutivos registrando movimientos (hasta
     ahora solo visible dentro de /saldo)."""

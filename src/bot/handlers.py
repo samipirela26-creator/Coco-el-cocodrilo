@@ -18,6 +18,7 @@ from src.bot.access import _is_allowed, _perfil_de, _check_cooldown
 from src.bot.formatters import (
     format_confirmation_message, format_ajuste_message, format_ajuste_preview_message,
     format_transferencia_message, format_diezmo_pagado_message,
+    format_deuda_nueva_message, format_deuda_pago_message,
 )
 from src.bot.replies import (
     _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard,
@@ -171,6 +172,27 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
             context, update, db, perfil, moneda, data.get('cuenta'), data['monto'],
             fuente, data.get('respuesta'), prefix=prefix,
         )
+        return
+
+    if data['tipo'] == 'deuda_nueva':
+        db.register_debt(
+            perfil=perfil, persona=data['persona'], tipo=data['tipo_deuda'],
+            moneda=moneda, monto=float(data['monto']),
+            descripcion=data.get('descripcion', ''), fecha=data.get('fecha'),
+        )
+        mensaje = format_deuda_nueva_message(
+            data['persona'], data['tipo_deuda'], moneda, float(data['monto']), data.get('respuesta')
+        )
+        await _reply(update, f"{prefix}{mensaje}")
+        return
+
+    if data['tipo'] == 'deuda_pago':
+        resultado = db.register_payment(
+            perfil=perfil, persona=data['persona'], tipo=data['tipo_deuda'],
+            moneda=moneda, monto=float(data.get('monto') or 0),
+        )
+        mensaje = format_deuda_pago_message(resultado, data['persona'], moneda, data.get('respuesta'))
+        await _reply(update, f"{prefix}{mensaje}")
         return
 
     if data['tipo'] == 'transferencia':

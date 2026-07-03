@@ -18,7 +18,7 @@ from src.bot.commands import (
     presupuesto_command, racha_command, menu_command, menu_callback,
     resumen_nav_callback, deshacer_callback, diezmo_command, diezmo_pagado_command,
     bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
-    cuenta_nueva_command,
+    cuenta_nueva_command, deudas_command,
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
@@ -148,6 +148,7 @@ COMANDOS_PUBLICOS = [
     BotCommand("racha", "Ver sus días seguidos registrando"),
     BotCommand("diezmo", "Ver diezmo pendiente"),
     BotCommand("diezmo_pagado", "Marcar el diezmo como pagado"),
+    BotCommand("deudas", "Ver deudas y préstamos pendientes"),
     BotCommand("deshacer", "Deshacer su último gasto/ingreso"),
     BotCommand("saldo_inicial", "Fijar su saldo inicial en Bs"),
     BotCommand("cuenta_nueva", "Abrir una cuenta nueva (ej: otro banco)"),
@@ -235,6 +236,7 @@ def main():
         application.add_handler(CommandHandler("desbloquear", desbloquear_command))
         application.add_handler(CommandHandler("bloqueados", bloqueados_command))
         application.add_handler(CommandHandler("cuenta_nueva", cuenta_nueva_command))
+        application.add_handler(CommandHandler("deudas", deudas_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))

@@ -26,14 +26,21 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
         Tupla (es_valido, mensaje_error)
     """
     tipo = data.get('tipo')
-    if tipo not in ('gasto', 'ingreso', 'ajuste_saldo', 'charla', 'transferencia', 'diezmo_pagado'):
-        return False, "El campo 'tipo' debe ser 'gasto', 'ingreso', 'ajuste_saldo', 'transferencia', 'diezmo_pagado' o 'charla'"
+    tipos_validos = (
+        'gasto', 'ingreso', 'ajuste_saldo', 'charla', 'transferencia',
+        'diezmo_pagado', 'deuda_nueva', 'deuda_pago',
+    )
+    if tipo not in tipos_validos:
+        return False, f"El campo 'tipo' debe ser uno de: {', '.join(tipos_validos)}"
 
     if tipo == 'charla':
         return True, ""
 
     if tipo == 'transferencia':
         return _validate_transferencia(data)
+
+    if tipo in ('deuda_nueva', 'deuda_pago'):
+        return _validate_deuda(data, tipo)
 
     if tipo == 'diezmo_pagado':
         moneda = data.get('moneda')
@@ -71,6 +78,42 @@ def validate_expense_data(data: dict, valid_categories: list = None) -> Tuple[bo
     cuenta = data.get('cuenta')
     if cuenta and cuenta not in CUENTAS_VALIDAS:
         return False, f"La cuenta '{cuenta}' no es válida. Use una de: {', '.join(CUENTAS_VALIDAS)}"
+
+    return True, ""
+
+
+def _validate_deuda(data: dict, tipo: str) -> Tuple[bool, str]:
+    """Valida un registro de deuda/préstamo informal (deuda_nueva) o el pago
+    de una deuda existente (deuda_pago). No toca 'categoria'/'cuenta' -- usa
+    'persona' y 'tipo_deuda' en su lugar."""
+    persona = data.get('persona')
+    if not persona or not isinstance(persona, str) or not persona.strip():
+        return False, "Falta el nombre de la persona ('persona') para la deuda"
+
+    tipo_deuda = data.get('tipo_deuda')
+    if tipo_deuda not in ('prestado', 'pedido'):
+        return False, "El campo 'tipo_deuda' debe ser 'prestado' o 'pedido'"
+
+    monto = data.get('monto', 0)
+    try:
+        monto = float(monto)
+    except (ValueError, TypeError):
+        return False, "El monto debe ser un número válido"
+    if tipo == 'deuda_nueva' and monto <= 0:
+        return False, "El monto de una deuda nueva debe ser mayor que 0"
+    if monto < 0:
+        return False, "El monto no puede ser negativo"
+
+    moneda = data.get('moneda', 'Bs') or 'Bs'
+    if moneda not in MONEDAS_VALIDAS:
+        return False, f"La moneda '{moneda}' no es válida. Use una de: {', '.join(MONEDAS_VALIDAS)}"
+
+    fecha = data.get('fecha')
+    if fecha:
+        try:
+            datetime.strptime(fecha, '%Y-%m-%d')
+        except ValueError:
+            return False, "La fecha debe tener formato YYYY-MM-DD"
 
     return True, ""
 

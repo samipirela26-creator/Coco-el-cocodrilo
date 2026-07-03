@@ -49,6 +49,7 @@ Comandos:
 /racha - ver sus días seguidos registrando
 /diezmo - ver su diezmo pendiente (10% de cada ingreso, solo informativo)
 /diezmo_pagado [moneda] - marcar el diezmo como pagado (o dígame "ya pagué el diezmo")
+/deudas - ver deudas y préstamos informales pendientes (quién le debe, a quién le debe)
 /help - ver categorías y ayuda"""
 
 
@@ -81,6 +82,12 @@ Envíeme un mensaje, foto o nota de voz describiendo el gasto, ingreso o saldo, 
 Si no menciona moneda, asumo Bs. Puede decir "20 dólares" o "3000 pesos" para USD/COP.
 En USD, si no menciona Binance/USDT/cripto, asumo que es Efectivo.
 
+🤝 Deudas y préstamos informales (con personas que NO usan el bot):
+• "Le presté 50 dólares a Pedro" / "Maria me prestó 20 mil bolívares" -> queda anotado
+• "Pedro me pagó lo que debía" / "Le abone 10 dólares a Pedro" -> aplica el pago (FIFO,
+  de la deuda más vieja a la más nueva)
+No toca ninguna billetera -- es solo un registro de quién le debe a quién.
+
 Comandos:
 /menu - botones rápidos (saldo, resumen, cambio, ayuda), también escribiendo "menu"
 /saldo - su saldo (BDV, Binance, Efectivo), con conversión BCV/Binance de sus Bs
@@ -97,4 +104,6 @@ Comandos:
 /diezmo - cuánto tiene pendiente de diezmo (10% de cada ingreso, se acumula solo;
   nunca toca ninguna billetera ni el saldo de /saldo, es solo informativo)
 /diezmo_pagado [Bs/USD/COP] - marca el diezmo como pagado (todo, o solo esa moneda);
-  también puede decirme "ya pagué el diezmo" por texto, voz o una captura de la transferencia"""
+  también puede decirme "ya pagué el diezmo" por texto, voz o una captura de la transferencia
+/deudas - resumen neto de deudas/préstamos informales por persona y moneda (no toca
+  ninguna billetera; dígame "le presté X a [persona]" o "[persona] me pagó" para registrar)"""

@@ -144,6 +144,30 @@ class SchemaMixin:
             )
         """)
 
+        # Deudas y préstamos informales (persona a persona, NO con el propio
+        # bot ni entre perfiles) -- ej. "le presté 50 dólares a Pedro" o
+        # "Maria me prestó 20 mil bolívares". A diferencia de gasto/ingreso,
+        # NO toca ninguna billetera: es solo un registro de "quién le debe a
+        # quién" para no perder la cuenta. tipo='prestado' -> la persona le
+        # debe a usted; tipo='pedido' -> usted le debe a la persona. Ver
+        # DebtsMixin en src/storage/debts.py.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS debts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                perfil TEXT NOT NULL,
+                persona TEXT NOT NULL,
+                tipo TEXT NOT NULL CHECK(tipo IN ('prestado', 'pedido')),
+                moneda TEXT NOT NULL,
+                monto_original REAL NOT NULL,
+                monto_pendiente REAL NOT NULL,
+                descripcion TEXT,
+                fecha TEXT NOT NULL,
+                saldada INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                closed_at TEXT
+            )
+        """)
+
         # wallets: la clave primaria cambia (ahora incluye perfil), así que si
         # la tabla existe con el esquema viejo (sin perfil) hay que migrarla
         # copiando los datos al perfil legacy en vez de solo agregar la columna.

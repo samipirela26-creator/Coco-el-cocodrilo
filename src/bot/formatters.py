@@ -126,6 +126,36 @@ def _tasa_label(moneda_origen: str, moneda_destino: str) -> str:
     return ""
 
 
+def format_deuda_nueva_message(persona: str, tipo_deuda: str, moneda: str, monto: float, respuesta: str = "") -> str:
+    """Confirmación al registrar una deuda/préstamo informal nuevo (ver
+    DebtsMixin.register_debt). tipo_deuda='prestado' -> la persona le queda
+    debiendo a usted; 'pedido' -> usted le queda debiendo a la persona."""
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    if tipo_deuda == 'prestado':
+        linea = f"👤 {persona} le debe a usted: {simbolo} {monto:,.2f} {moneda}"
+    else:
+        linea = f"👤 Usted le debe a {persona}: {simbolo} {monto:,.2f} {moneda}"
+    return f"""✅ Deuda registrada
+
+{linea}""" + _coco_line(respuesta)
+
+
+def format_deuda_pago_message(resultado: dict, persona: str, moneda: str, respuesta: str = "") -> str:
+    """Confirmación al aplicar un pago/abono a deudas pendientes (ver
+    DebtsMixin.register_payment). `resultado` trae aplicado/sobra/saldadas."""
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    lines = [
+        "✅ Pago de deuda registrado\n",
+        f"👤 {persona}",
+        f"💰 Aplicado: {simbolo} {resultado['aplicado']:,.2f} {moneda}",
+    ]
+    if resultado['saldadas'] > 0:
+        lines.append(f"🎉 Deuda(s) saldada(s): {resultado['saldadas']}")
+    if resultado['sobra'] > 0.005:
+        lines.append(f"↩️ Sobrante (no había pendiente por esa cantidad): {simbolo} {resultado['sobra']:,.2f}")
+    return '\n'.join(lines) + _coco_line(respuesta)
+
+
 def format_transferencia_message(resultado: dict, respuesta: str = "", tasa_cambio: float = None) -> str:
     simbolo_o = MONEDA_SIMBOLO.get(resultado['moneda_origen'], '')
     simbolo_d = MONEDA_SIMBOLO.get(resultado['moneda_destino'], '')

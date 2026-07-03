@@ -121,6 +121,26 @@ Reglas:
   específica (ej. "pagué el diezmo en dólares"), usa esa "moneda"; si no especifica ninguna,
   deja "moneda" en null (se salda el pendiente de TODAS las monedas). Para "diezmo_pagado" deja
   "monto" en 0 y "categoria"/"descripcion" vacíos -- no se usan.
+- "tipo" es "deuda_nueva" cuando el usuario dice que LE PRESTÓ dinero a alguien (esa persona le
+  queda debiendo a él) o que ALGUIEN LE PRESTÓ/DIO dinero a él (él le queda debiendo a esa
+  persona). Esto NO es un gasto ni un ingreso -- el dinero prestado no se resta ni se suma a
+  ninguna billetera en este registro, solo se anota la deuda para no perder la cuenta.
+  * "persona": nombre o apodo de la otra persona (obligatorio), tal como lo mencionó el usuario.
+  * "tipo_deuda": "prestado" si el usuario le prestó/dio dinero a la persona (ella le debe a él).
+    Ejemplo: "le presté 50 dólares a Pedro" -> persona="Pedro", tipo_deuda="prestado".
+  * "tipo_deuda": "pedido" si la persona le prestó/dio dinero al usuario (él le debe a ella).
+    Ejemplo: "Maria me prestó 20 mil bolívares" -> persona="Maria", tipo_deuda="pedido".
+  * "monto", "moneda", "fecha", "descripcion" se llenan igual que en un gasto normal.
+- "tipo" es "deuda_pago" cuando el usuario avisa que SALDÓ o LE PAGARON una deuda que ya existía
+  (parcial o total) -- NO es un gasto/ingreso nuevo tampoco.
+  * "persona" y "tipo_deuda" identifican CUÁL deuda se está saldando, con el mismo significado
+    de arriba: si "Pedro me pagó los 50 dólares que le presté", persona="Pedro",
+    tipo_deuda="prestado" (era una deuda a favor del usuario). Si "le pagué a Maria los 20 mil
+    que le debía", persona="Maria", tipo_deuda="pedido".
+  * Si el usuario da el monto exacto que se pagó, úsalo en "monto". Si NO da un monto (ej. "Pedro
+    ya me pagó todo", "terminé de pagarle a Maria"), deja "monto" en 0 -- el sistema saldará
+    automáticamente todo lo pendiente con esa persona en esa dirección.
+  * "moneda" y "fecha" se llenan igual que un gasto (si no se menciona moneda, asume "Bs").
 """
 
 
@@ -153,7 +173,7 @@ montos, usa "tipo": "charla" y responde en "respuesta" como Coco lo haría (brev
 en su voz), charlando de vuelta o preguntando qué quiere registrar si viene al caso.
 Responde EXCLUSIVAMENTE con un objeto JSON.
 
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado", "deuda_nueva", "deuda_pago" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>, "persona": <string, solo si tipo es deuda_nueva o deuda_pago>, "tipo_deuda": <"prestado" o "pedido", solo si tipo es deuda_nueva o deuda_pago>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación
   (saludo, pregunta, comentario). "monto" va en 0, "categoria" y "descripcion" vacíos.
@@ -223,7 +243,7 @@ lo que dice, y responde EXCLUSIVAMENTE con un objeto JSON. Si NO menciona ningú
 NO inventes montos: usa "tipo": "charla" y responde en "respuesta" como Coco.
 HOY ES {today}.
 {_persona_coco()}
-Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>}}
+Formato: {{"tipo": <"gasto", "ingreso", "ajuste_saldo", "transferencia", "diezmo_pagado", "deuda_nueva", "deuda_pago" o "charla">, "monto": <float positivo, 0 si es charla, transferencia o diezmo_pagado>, "categoria": <string, vacío si es ajuste_saldo, transferencia, diezmo_pagado o charla>, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda especificada>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string, vacío si es charla o diezmo_pagado>, "respuesta": <string, muy corta, en la voz de Coco>, "moneda_origen": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_origen": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_origen": <float, solo si tipo es transferencia>, "moneda_destino": <"Bs"/"USD"/"COP", solo si tipo es transferencia>, "cuenta_destino": <"BDV"/"Binance"/"Efectivo", solo si tipo es transferencia>, "monto_destino": <float, solo si tipo es transferencia>, "tasa_cambio": <float o null, solo si tipo es transferencia Y el usuario dio una tasa en vez de ambos montos>, "persona": <string, solo si tipo es deuda_nueva o deuda_pago>, "tipo_deuda": <"prestado" o "pedido", solo si tipo es deuda_nueva o deuda_pago>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 - Si "tipo" es "charla": no hay gasto/ingreso/ajuste que registrar, es solo conversación.
   "monto" va en 0, "categoria" y "descripcion" vacíos.
