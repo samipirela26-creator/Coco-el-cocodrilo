@@ -14,7 +14,7 @@ from src.utils.exceptions import (
     GeminiInvalidJSONError,
     StorageError,
 )
-from src.bot.access import _is_allowed, _perfil_de
+from src.bot.access import _is_allowed, _perfil_de, _check_cooldown
 from src.bot.formatters import (
     format_confirmation_message, format_ajuste_message, format_transferencia_message,
     format_diezmo_pagado_message,
@@ -163,6 +163,9 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
         await menu_command(update, context)
         return
 
+    if not _check_cooldown(update, context):
+        return
+
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
     await _maybe_welcome_new_profile(update, context, perfil)
@@ -229,6 +232,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         usuario note al toque si el OCR leyó mal algo (ver db.set_wallet_balance).
     """
     if not _is_allowed(update, context):
+        return
+    if not _check_cooldown(update, context):
         return
 
     user_id = update.effective_user.id
@@ -302,6 +307,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ajuste de saldo).
     """
     if not _is_allowed(update, context):
+        return
+    if not _check_cooldown(update, context):
         return
 
     user_id = update.effective_user.id
