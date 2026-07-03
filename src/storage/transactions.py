@@ -51,6 +51,7 @@ class TransactionsMixin:
             logger.info(f"Transacción registrada [{perfil}]: {tipo} {moneda}/{cuenta} {monto} - {categoria} - {fecha}")
             return cuenta
         except sqlite3.Error as e:
+            self._conn.rollback()
             raise StorageError(f"Error al guardar transacción: {e}")
 
     def delete_last_transaction(self, perfil: str) -> dict:
@@ -91,6 +92,7 @@ class TransactionsMixin:
                 "nuevo_balance": nuevo_balance,
             }
         except sqlite3.Error as e:
+            self._conn.rollback()
             raise StorageError(f"Error al deshacer la transacción: {e}")
 
     def _ensure_category(self, categoria: str, perfil: str) -> None:

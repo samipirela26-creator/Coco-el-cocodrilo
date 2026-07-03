@@ -97,6 +97,10 @@ class WalletsMixin:
             logger.info(f"Saldo actualizado [{perfil}]: {moneda}/{cuenta} {anterior} -> {monto} (fuente={fuente})")
             return cuenta, anterior
         except sqlite3.Error as e:
+            # Si el UPDATE pasó pero el INSERT del snapshot falló (o viceversa),
+            # no dejar la conexión con cambios a medias pendientes de commit --
+            # deshacer todo y que quede como si no hubiera pasado nada.
+            self._conn.rollback()
             raise StorageError(f"Error al actualizar saldo: {e}")
 
     def transfer(self, perfil: str, moneda_origen: str, cuenta_origen: str, monto_origen: float,
@@ -120,23 +124,29 @@ class WalletsMixin:
         self._ensure_wallets_for_profile(perfil)
         try:
             anterior_origen = self.get_wallet_balance(perfil, moneda_origen, cuenta_origen)
-            nuevo_origen = anterior_origen - monto_origen
+            misma_billetera = moneda_origen == moneda_destino and cuenta_origen == cuenta_destino
 
-            if moneda_origen == moneda_destino and cuenta_origen == cuenta_destino:
-                # Transferencia a la misma billetera (raro, pero por si acaso):
-                # no tiene sentido restar y sumar lo mismo -- no hace nada.
+            if misma_billetera:
+                # Transferencia a la misma billetera (raro, pero puede pasar si
+                # el LLM interpretó mal el mensaje): de verdad NO se toca el
+                # saldo -- antes este caso restaba igual el monto_origen sin
+                # sumar nada de vuelta, perdiendo dinero en silencio (bug
+                # corregido: ahora nuevo_origen/nuevo_destino quedan iguales
+                # al saldo actual, sin ningún UPDATE).
+                nuevo_origen = anterior_origen
                 anterior_destino = anterior_origen
-                nuevo_destino = anterior_destino
+                nuevo_destino = anterior_origen
             else:
+                nuevo_origen = anterior_origen - monto_origen
                 anterior_destino = self.get_wallet_balance(perfil, moneda_destino, cuenta_destino)
                 nuevo_destino = anterior_destino + monto_destino
 
             ahora = datetime.now().isoformat()
-            self._conn.execute(
-                "UPDATE wallets SET balance = ?, updated_at = ? WHERE perfil = ? AND moneda = ? AND cuenta = ?",
-                (nuevo_origen, ahora, perfil, moneda_origen, cuenta_origen)
-            )
-            if not (moneda_origen == moneda_destino and cuenta_origen == cuenta_destino):
+            if not misma_billetera:
+                self._conn.execute(
+                    "UPDATE wallets SET balance = ?, updated_at = ? WHERE perfil = ? AND moneda = ? AND cuenta = ?",
+                    (nuevo_origen, ahora, perfil, moneda_origen, cuenta_origen)
+                )
                 self._conn.execute(
                     "UPDATE wallets SET balance = ?, updated_at = ? WHERE perfil = ? AND moneda = ? AND cuenta = ?",
                     (nuevo_destino, ahora, perfil, moneda_destino, cuenta_destino)
@@ -165,4 +175,9 @@ class WalletsMixin:
                 "anterior_destino": anterior_destino, "nuevo_destino": nuevo_destino,
             }
         except sqlite3.Error as e:
+            # Una transferencia toca DOS billeteras + dos snapshots -- si algo
+            # falla a mitad de camino (ej. tercer statement), sin este rollback
+            # podría quedar el origen ya descontado pero el destino sin
+            # acreditar, pendiente de un commit posterior no relacionado.
+            self._conn.rollback()
             raise StorageError(f"Error al transferir saldo: {e}")
