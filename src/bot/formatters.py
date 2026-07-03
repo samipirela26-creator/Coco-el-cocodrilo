@@ -86,6 +86,21 @@ Antes: {simbolo} {anterior:,.2f}
 Ahora: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
 
 
+def format_ajuste_preview_message(moneda: str, cuenta: str, anterior: float, nuevo: float, respuesta: str = "") -> str:
+    """Vista previa ANTES de guardar un ajuste de saldo (foto o texto/voz tipo
+    "tengo X en efectivo") -- pide confirmación en vez de sobrescribir directo,
+    porque un OCR/LLM que lee mal un dígito puede corromper el saldo de
+    referencia sin que el usuario lo note a tiempo (ver botones en
+    _saldo_confirm_keyboard, src/bot/replies.py)."""
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    cuenta_emoji = CUENTA_EMOJI.get(cuenta, '👛')
+    return f"""🐊 ¿Confirma actualizar su saldo?
+
+{cuenta_emoji} {cuenta} ({moneda})
+Antes: {simbolo} {anterior:,.2f}
+Nuevo: {simbolo} {nuevo:,.2f}""" + _coco_line(respuesta)
+
+
 def format_diezmo_pagado_message(pagados: list, respuesta: str = "") -> str:
     """Confirmación al marcar el diezmo como pagado (ver TithesMixin.mark_tithe_paid).
     `pagados` es una lista de {"moneda", "monto_pagado"} -- vacía si no había nada

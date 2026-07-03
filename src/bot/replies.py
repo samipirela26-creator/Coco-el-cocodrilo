@@ -31,6 +31,16 @@ def _menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _saldo_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Botones para confirmar/cancelar un ajuste de saldo (foto o texto/voz)
+    ANTES de sobrescribir la billetera -- ver format_ajuste_preview_message
+    en formatters.py y saldo_callback en handlers.py."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, actualizar", callback_data="coco_saldo:si"),
+        InlineKeyboardButton("❌ No, cancelar", callback_data="coco_saldo:no"),
+    ]])
+
+
 def _deshacer_keyboard() -> InlineKeyboardMarkup:
     """Botón bajo cada confirmación de gasto/ingreso para deshacer sin tener
     que escribir /deshacer. Siempre deshace el ÚLTIMO movimiento del perfil

@@ -16,24 +16,74 @@ from src.utils.exceptions import (
 )
 from src.bot.access import _is_allowed, _perfil_de, _check_cooldown
 from src.bot.formatters import (
-    format_confirmation_message, format_ajuste_message, format_transferencia_message,
-    format_diezmo_pagado_message,
+    format_confirmation_message, format_ajuste_message, format_ajuste_preview_message,
+    format_transferencia_message, format_diezmo_pagado_message,
 )
-from src.bot.replies import _reply, _deshacer_keyboard, _category_keyboard
+from src.bot.replies import _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard
 from src.bot.constants import MONEDA_SIMBOLO
+from src.storage.constants import resolve_cuenta
 from src.bot.commands import menu_command, _maybe_welcome_new_profile
 
 logger = logging.getLogger('gastos-bot')
 
 
+async def _pedir_confirmacion_ajuste(context: ContextTypes.DEFAULT_TYPE, update: Update, db: DBClient,
+                                      perfil: str, moneda: str, cuenta: str, monto: float,
+                                      fuente: str, respuesta: str = "", prefix: str = "") -> None:
+    """Muestra una vista previa del ajuste de saldo (antes/nuevo) y pide
+    confirmación con botones ANTES de escribir nada en la base de datos --
+    ver format_ajuste_preview_message. Guarda los datos pendientes en
+    `context.user_data` hasta que llegue la respuesta del botón (ver
+    saldo_callback). Compartido por texto/voz (ajuste_saldo) y fotos
+    (captura_tipo == 'saldo')."""
+    cuenta_resuelta = resolve_cuenta(moneda, cuenta)
+    anterior = db.get_wallet_balance(perfil, moneda, cuenta_resuelta)
+    context.user_data['pending_ajuste'] = {
+        'perfil': perfil, 'moneda': moneda, 'cuenta': cuenta_resuelta,
+        'monto': monto, 'fuente': fuente, 'respuesta': respuesta,
+    }
+    mensaje = format_ajuste_preview_message(moneda, cuenta_resuelta, anterior, monto, respuesta)
+    await _reply(update, f"{prefix}{mensaje}", reply_markup=_saldo_confirm_keyboard())
+
+
+async def saldo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de confirmación de _pedir_confirmacion_ajuste: solo AHORA se
+    escribe el ajuste en la base de datos (o se descarta si canceló)."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_ajuste', None)
+    await query.answer()
+    if decision != "si" or not pending:
+        try:
+            await query.edit_message_text("🐊 Cancelado, no toqué su saldo.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
+    try:
+        cuenta_resuelta, anterior = db.set_wallet_balance(
+            pending['perfil'], pending['moneda'], pending['cuenta'], pending['monto'], fuente=pending['fuente']
+        )
+        mensaje = format_ajuste_message(pending['moneda'], cuenta_resuelta, anterior, pending['monto'], pending.get('respuesta'))
+        await query.edit_message_text(mensaje)
+    except StorageError as e:
+        await query.edit_message_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+
+
 async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient, update: Update,
+                             context: ContextTypes.DEFAULT_TYPE = None,
                              prefix: str = "", fuente: str = 'texto') -> None:
-    """Guarda una transacción (gasto/ingreso), un ajuste de saldo, o una
-    transferencia entre billeteras propias ya parseada y validada, en los
-    datos DE ESTE PERFIL (aislados de cualquier otro), y responde con la
-    confirmación correspondiente. Compartido por texto, voz y fotos de
-    transferencia (a un tercero -- distinto de "transferencia" tipo, que es
-    entre billeteras propias)."""
+    """Guarda una transacción (gasto/ingreso) o una transferencia entre
+    billeteras propias ya parseada y validada, en los datos DE ESTE PERFIL
+    (aislados de cualquier otro), y responde con la confirmación
+    correspondiente. Compartido por texto, voz y fotos de transferencia (a
+    un tercero -- distinto de "transferencia" tipo, que es entre billeteras
+    propias). Los ajustes de saldo ("ajuste_saldo") NO se guardan acá --
+    pasan por _pedir_confirmacion_ajuste primero (ver ese docstring)."""
     moneda = data.get('moneda', 'Bs')
 
     if data['tipo'] == 'diezmo_pagado':
@@ -46,9 +96,10 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
         return
 
     if data['tipo'] == 'ajuste_saldo':
-        cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), data['monto'], fuente=fuente)
-        mensaje = format_ajuste_message(moneda, cuenta_resuelta, anterior, data['monto'], data.get('respuesta'))
-        await _reply(update, f"{prefix}{mensaje}")
+        await _pedir_confirmacion_ajuste(
+            context, update, db, perfil, moneda, data.get('cuenta'), data['monto'],
+            fuente, data.get('respuesta'), prefix=prefix,
+        )
         return
 
     if data['tipo'] == 'transferencia':
@@ -133,7 +184,7 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
     try:
-        await _save_and_confirm(pending, user_id, perfil, db, update, fuente='texto')
+        await _save_and_confirm(pending, user_id, perfil, db, update, context, fuente='texto')
     except StorageError as e:
         await _reply(update, f"❌ Error al guardar en la base de datos.\n🔧 {e}")
     try:
@@ -195,7 +246,7 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
             await update.message.reply_text(expense_data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
-        await _save_and_confirm(expense_data, user_id, perfil, db, update, fuente='texto')
+        await _save_and_confirm(expense_data, user_id, perfil, db, update, context, fuente='texto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
@@ -226,10 +277,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     Descarga la foto de mayor resolución, la analiza con Gemini Vision y
     decide el flujo según 'captura_tipo':
       - "transferencia": registra un gasto/ingreso.
-      - "saldo": ADOPTA directo el saldo leído como la billetera correspondiente
-        (BDV si es Bs, Binance/Efectivo si es USD según la app detectada) --
-        sin pedir confirmación, pero mostrando antes/después para que el
-        usuario note al toque si el OCR leyó mal algo (ver db.set_wallet_balance).
+      - "saldo": pide confirmación (antes/nuevo) antes de sobrescribir la
+        billetera correspondiente (BDV si es Bs, Binance/Efectivo si es USD
+        según la app detectada) -- ver _pedir_confirmacion_ajuste. Un OCR que
+        lee mal un dígito ya no corrompe el saldo en silencio.
     """
     if not _is_allowed(update, context):
         return
@@ -265,10 +316,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         if captura_tipo == 'saldo':
             monto_banco = float(data.get('monto', 0))
-            cuenta_resuelta, anterior = db.set_wallet_balance(perfil, moneda, data.get('cuenta'), monto_banco, fuente='foto')
-            await update.message.reply_text(
-                f"📸 Detecté una captura de saldo.\n\n"
-                f"{format_ajuste_message(moneda, cuenta_resuelta, anterior, monto_banco)}"
+            await _pedir_confirmacion_ajuste(
+                context, update, db, perfil, moneda, data.get('cuenta'), monto_banco,
+                fuente='foto', respuesta=data.get('respuesta'), prefix="📸 Detecté una captura de saldo.\n\n",
             )
             return
 
@@ -280,7 +330,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        await _save_and_confirm(data, user_id, perfil, db, update, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
+        await _save_and_confirm(data, user_id, perfil, db, update, context, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")
@@ -343,7 +393,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text(data.get('respuesta') or "🐊 ¿En qué le ayudo?")
             return
 
-        await _save_and_confirm(data, user_id, perfil, db, update, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
+        await _save_and_confirm(data, user_id, perfil, db, update, context, prefix="🎤 Nota de voz procesada.\n\n", fuente='audio')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")

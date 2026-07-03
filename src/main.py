@@ -20,7 +20,7 @@ from src.bot.commands import (
     bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
 )
 from src.bot.handlers import (
-    handle_message, handle_photo, handle_voice, error_handler, category_callback,
+    handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
 )
 
 logger = None
@@ -189,6 +189,7 @@ def main():
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
+        application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )
