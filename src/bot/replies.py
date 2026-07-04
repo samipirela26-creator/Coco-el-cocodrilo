@@ -52,6 +52,19 @@ def _cuenta_nueva_confirm_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+def _tipo_transferencia_keyboard() -> InlineKeyboardMarkup:
+    """Botones para cuando Gemini no está seguro (sin dato propio que
+    comparar en el campo "Identificación" de la captura, ver
+    build_image_prompt) de si una captura de Pago Móvil/transferencia fue un
+    gasto o un ingreso -- en vez de adivinar y arriesgarse a dañar el saldo,
+    se le pregunta directo al usuario. Ver _pedir_confirmacion_tipo_transferencia
+    y tipo_transferencia_callback en handlers.py."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💸 Fue un gasto", callback_data="coco_tipotransf:gasto"),
+        InlineKeyboardButton("💵 Fue un ingreso", callback_data="coco_tipotransf:ingreso"),
+    ]])
+
+
 def _deshacer_keyboard() -> InlineKeyboardMarkup:
     """Botón bajo cada confirmación de gasto/ingreso para deshacer sin tener
     que escribir /deshacer. Siempre deshace el ÚLTIMO movimiento del perfil

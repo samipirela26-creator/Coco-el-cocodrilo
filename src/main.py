@@ -22,7 +22,7 @@ from src.bot.commands import (
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
-    cuenta_nueva_callback,
+    cuenta_nueva_callback, tipo_transferencia_callback,
 )
 
 logger = None
@@ -283,6 +283,7 @@ def main():
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))
         application.add_handler(CallbackQueryHandler(cuenta_nueva_callback, pattern=r"^coco_cuentanueva:"))
+        application.add_handler(CallbackQueryHandler(tipo_transferencia_callback, pattern=r"^coco_tipotransf:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )

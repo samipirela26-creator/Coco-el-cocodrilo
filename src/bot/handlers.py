@@ -24,7 +24,7 @@ from src.bot.formatters import (
 )
 from src.bot.replies import (
     _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard,
-    _cuenta_nueva_confirm_keyboard,
+    _cuenta_nueva_confirm_keyboard, _tipo_transferencia_keyboard,
 )
 from src.bot.constants import MONEDA_SIMBOLO
 from src.storage.constants import resolve_cuenta, CUENTAS_POR_MONEDA
@@ -255,6 +255,56 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
     # Botón de deshacer solo para gasto/ingreso (mismo alcance que /deshacer,
     # que no cubre ajuste_saldo ni transferencia -- ver delete_last_transaction).
     await _reply(update, f"{prefix}{confirmation_message}", reply_markup=_deshacer_keyboard())
+
+
+async def _pedir_confirmacion_tipo_transferencia(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                                  data: dict, user_id: int, perfil: str, prefix: str) -> None:
+    """Cuando Gemini marcó 'tipo_incierto': true en una captura de
+    transferencia (no encontró ningún dato propio del usuario -- cédula/
+    teléfono -- para comparar contra el campo "Identificación", ver
+    build_image_prompt), en vez de arriesgarse a adivinar mal si fue gasto o
+    ingreso, se le pregunta directo al usuario con botones. Guarda los datos
+    ya parseados en `context.user_data` hasta que llegue la respuesta (ver
+    tipo_transferencia_callback)."""
+    context.user_data['pending_tipo_transferencia'] = {
+        'data': data, 'user_id': user_id, 'perfil': perfil, 'prefix': prefix,
+    }
+    simbolo = MONEDA_SIMBOLO.get(data.get('moneda', 'Bs'), '')
+    monto = data.get('monto', 0)
+    await update.message.reply_text(
+        f"{prefix}🐊 No estoy seguro si este movimiento de {simbolo} {monto:,.2f} fue un gasto o un "
+        f"ingreso (no encontré su cédula/teléfono en la captura para comparar). ¿Cuál de los dos fue?",
+        reply_markup=_tipo_transferencia_keyboard(),
+    )
+
+
+async def tipo_transferencia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de _pedir_confirmacion_tipo_transferencia: recién ahora se fija
+    'tipo' con la respuesta del usuario y se guarda de verdad."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_tipo_transferencia', None)
+    await query.answer()
+    if decision not in ('gasto', 'ingreso') or not pending:
+        try:
+            await query.edit_message_text("🐊 Cancelado, no registré nada.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
+    data = pending['data']
+    data['tipo'] = decision
+    try:
+        await _save_and_confirm(
+            data, pending['user_id'], pending['perfil'], db, update, context,
+            prefix=pending['prefix'], fuente='foto',
+        )
+    except StorageError as e:
+        await query.edit_message_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
 
 
 async def _offer_category_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, expense_data: dict) -> None:
@@ -519,7 +569,12 @@ async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return
 
-        await _save_and_confirm(data, user_id, perfil, db, update, context, prefix="📸 Captura de transferencia detectada.\n\n", fuente='foto')
+        prefix = "📸 Captura de transferencia detectada.\n\n"
+        if data.get('tipo_incierto'):
+            await _pedir_confirmacion_tipo_transferencia(update, context, data, user_id, perfil, prefix)
+            return
+
+        await _save_and_confirm(data, user_id, perfil, db, update, context, prefix=prefix, fuente='foto')
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")

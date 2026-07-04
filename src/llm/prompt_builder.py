@@ -255,7 +255,10 @@ propios. Por lo tanto:
   entonces el usuario fue quien envió el pago -> "tipo": "gasto".
 Si la captura NO tiene un campo "Identificación" separado, usa como respaldo los campos "Origen"/
 "Destino": si el dato propio aparece en "Destino" es ingreso, si aparece en "Origen" es gasto.
-Esta comparación de datos propios tiene PRIORIDAD sobre cualquier otra pista visual si hay conflicto."""
+Esta comparación de datos propios tiene PRIORIDAD sobre cualquier otra pista visual si hay conflicto.
+Si NINGUNO de los datos propios del usuario aparece en ningún campo de la captura (no hay forma de
+comparar con certeza), pon tu mejor estimación en "tipo" igual, pero marca "tipo_incierto": true
+para que se le pregunte al usuario con botones en vez de arriesgarse a adivinar mal."""
 
     system_prompt = f"""Eres un asistente contable personal que analiza capturas de pantalla
 de aplicaciones bancarias o de pago (ej. Banesco, Mercantil, BDV, Binance, Zelle, Pago Móvil).
@@ -268,7 +271,7 @@ Existen tres tipos de captura posibles:
    menciona explícitamente "diezmo" (ej. una transferencia con motivo "diezmo" o "ofrenda-diezmo").
 
 Responde EXCLUSIVAMENTE con un objeto JSON con este formato:
-{{"captura_tipo": <"transferencia", "saldo" o "diezmo_pagado">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "monto": <float, siempre positivo, 0 si captura_tipo es "diezmo_pagado">, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda clara>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
+{{"captura_tipo": <"transferencia", "saldo" o "diezmo_pagado">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "tipo_incierto": <bool, true SOLO si captura_tipo es "transferencia" y no pudiste confirmar "tipo" con certeza, ver más abajo>, "monto": <float, siempre positivo, 0 si captura_tipo es "diezmo_pagado">, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda clara>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 Reglas adicionales:
 - Si es una confirmación de transferencia donde el usuario ENVÍA dinero (paga algo, transfiere a otra persona/comercio), "tipo" es "gasto".
