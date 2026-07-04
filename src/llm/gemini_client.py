@@ -166,7 +166,8 @@ class GeminiClient(LLMConnector):
         return self._extract_json_from_text(response_text)
 
     def analyze_image(self, image_bytes: bytes, categories: list,
-                       dynamic_categories: list = None, mime_type: str = "image/jpeg") -> dict:
+                       dynamic_categories: list = None, mime_type: str = "image/jpeg",
+                       cuentas_propias: list = None) -> dict:
         """
         Analiza una captura de pantalla (transferencia o saldo bancario) usando
         Gemini Vision, probando los modelos de MODELOS en orden si alguno se satura.
@@ -176,6 +177,9 @@ class GeminiClient(LLMConnector):
             categories: Categorías fijas
             dynamic_categories: Categorías dinámicas ya existentes
             mime_type: Tipo MIME de la imagen
+            cuentas_propias: identificadores propios del usuario (cédula, teléfono)
+                para distinguir con certeza gasto vs ingreso en Pago Móvil/transferencias
+                (ver Config.profile_to_account_ids y build_image_prompt)
 
         Returns:
             Diccionario con "captura_tipo" ("transferencia" o "saldo") y los
@@ -184,7 +188,7 @@ class GeminiClient(LLMConnector):
         Raises:
             GeminiConnectionError, GeminiInvalidJSONError
         """
-        prompt = build_image_prompt(categories, dynamic_categories)
+        prompt = build_image_prompt(categories, dynamic_categories, cuentas_propias)
         cuerpo = {
             "contents": [{
                 "role": "user",

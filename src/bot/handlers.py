@@ -420,7 +420,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         image_bytes = bytes(await photo_file.download_as_bytearray())
 
         dynamic_categories = db.get_dynamic_categories(perfil)
-        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories)
+        cuentas_propias = context.bot_data.get('profile_to_account_ids', {}).get(perfil)
+        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories, cuentas_propias=cuentas_propias)
         logger.debug(f"Datos extraídos de la imagen: {data}")
 
         captura_tipo = data.get('captura_tipo')

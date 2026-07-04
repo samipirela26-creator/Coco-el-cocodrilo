@@ -218,6 +218,7 @@ def main():
         application.bot_data["allowed_user_ids"] = config.allowed_user_ids
         application.bot_data["user_id_to_profile"] = config.user_id_to_profile
         application.bot_data["profile_to_user_ids"] = config.profile_to_user_ids
+        application.bot_data["profile_to_account_ids"] = config.profile_to_account_ids
         application.bot_data["owner_user_id"] = config.owner_user_id
 
         application.add_handler(CommandHandler("start", start_command))

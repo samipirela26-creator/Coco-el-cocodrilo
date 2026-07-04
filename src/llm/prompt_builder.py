@@ -196,9 +196,16 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
     return f"{system_prompt}\n\nUsuario: {user_message}\n\nAsistente:"
 
 
-def build_image_prompt(categories: list, dynamic_categories: list = None) -> str:
+def build_image_prompt(categories: list, dynamic_categories: list = None, cuentas_propias: list = None) -> str:
     """
     Prompt para analizar una captura de pantalla (transferencia o saldo bancario).
+
+    Args:
+        cuentas_propias: identificadores propios del usuario (ej. cédula sin
+            "V-", teléfono de Pago Móvil) para comparar contra los campos
+            "Origen"/"Destino"/"Identificación" de la captura y saber con
+            certeza si el dinero entró o salió, en vez de adivinar solo por
+            el texto/iconos de la imagen (ver Config.profile_to_account_ids).
 
     Returns:
         Prompt completo para enviar junto con la imagen a Gemini Vision.
@@ -206,6 +213,21 @@ def build_image_prompt(categories: list, dynamic_categories: list = None) -> str
     today = datetime.now().strftime("%Y-%m-%d")
     categories_str = '", "'.join(categories)
     dynamic_categories_str = '", "'.join(dynamic_categories) if dynamic_categories else ""
+
+    cuentas_hint = ""
+    if cuentas_propias:
+        cuentas_str = '", "'.join(cuentas_propias)
+        cuentas_hint = f"""
+
+DATOS PROPIOS DEL USUARIO (cédula y/o teléfono): "{cuentas_str}". Si la captura muestra campos
+como "Origen", "Destino" o "Identificación" con números de cuenta/teléfono/cédula, compara esos
+números contra los datos propios de arriba (basta con que coincidan los últimos dígitos visibles,
+ya que algunos apps ocultan parte del número con asteriscos):
+- Si el dato propio aparece en "Destino" (o como identificación del que RECIBE), el dinero ENTRÓ
+  a la cuenta del usuario -> "tipo": "ingreso", sin importar lo que digan otros textos de la imagen.
+- Si el dato propio aparece en "Origen" (o como identificación del que ENVÍA), el dinero SALIÓ de
+  la cuenta del usuario -> "tipo": "gasto".
+Esta comparación de datos propios tiene PRIORIDAD sobre cualquier otra pista visual si hay conflicto."""
 
     system_prompt = f"""Eres un asistente contable personal que analiza capturas de pantalla
 de aplicaciones bancarias o de pago (ej. Banesco, Mercantil, BDV, Binance, Zelle, Pago Móvil).
@@ -222,7 +244,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON con este formato:
 {_shared_rules(categories_str, dynamic_categories_str)}
 Reglas adicionales:
 - Si es una confirmación de transferencia donde el usuario ENVÍA dinero (paga algo, transfiere a otra persona/comercio), "tipo" es "gasto".
-- Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".
+- Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".{cuentas_hint}
 - Si es una pantalla de saldo de cuenta (no un movimiento), usa "captura_tipo": "saldo" y en "monto" pon el saldo mostrado.
   En este caso "tipo", "categoria" y "descripcion" pueden omitirse o dejarse vacíos.
 - Si el concepto/motivo de la transferencia menciona explícitamente "diezmo", usa
