@@ -66,20 +66,19 @@ class AccessControlMixin:
         ).fetchall()
         return [{"user_id": r[0], "nombre": r[1], "blocked_at": r[2]} for r in rows]
 
-    def get_account_ids(self, perfil: str) -> list:
-        """Cédulas/teléfonos guardados para este perfil (capturados por
-        conversación, ver _pedir_cedula en src/bot/handlers.py)."""
-        rows = self._conn.execute(
-            "SELECT account_id FROM profile_account_ids WHERE perfil = ?", (perfil,)
-        ).fetchall()
-        return [r[0] for r in rows]
+    def has_seen_pago_movil_intro(self, perfil: str) -> bool:
+        """True si ya se le explicó a este perfil, alguna vez, cómo funciona
+        la confirmación con botones (Salida/Entrada) de las capturas de Pago
+        Móvil -- para mandar esa explicación solo la primera vez (ver
+        _pedir_confirmacion_tipo_transferencia en src/bot/handlers.py)."""
+        row = self._conn.execute(
+            "SELECT 1 FROM pago_movil_intro WHERE perfil = ?", (perfil,)
+        ).fetchone()
+        return row is not None
 
-    def add_account_id(self, perfil: str, account_id: str) -> None:
-        """Guarda una cédula/teléfono nuevo para este perfil (idempotente)."""
+    def mark_pago_movil_intro_seen(self, perfil: str) -> None:
         self._conn.execute(
-            """INSERT OR IGNORE INTO profile_account_ids (perfil, account_id, created_at)
-               VALUES (?, ?, ?)""",
-            (perfil, account_id, datetime.now().isoformat())
+            "INSERT OR IGNORE INTO pago_movil_intro (perfil, shown_at) VALUES (?, ?)",
+            (perfil, datetime.now().isoformat())
         )
         self._conn.commit()
-        logger.info(f"Cédula/identificador guardado para perfil '{perfil}'")

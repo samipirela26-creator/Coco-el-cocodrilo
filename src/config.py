@@ -71,27 +71,6 @@ class Config:
                 self.user_id_to_profile[uid] = nombre
                 self.profile_to_user_ids.setdefault(nombre, []).append(uid)
 
-        # Identificadores propios por perfil (cédula, y opcionalmente teléfono
-        # de Pago Móvil), para que al analizar una captura de transferencia el
-        # LLM pueda comparar contra los campos "Origen"/"Destino"/"Identificación"
-        # y saber CON CERTEZA si el dinero entró o salió, en vez de adivinar
-        # solo por el texto de la imagen (fuente de bugs: una captura de un
-        # Pago Móvil RECIBIDO se leía como gasto). Mismo formato que
-        # USER_PROFILES: "nombre:id1|id2,otro_nombre:id3".
-        account_ids_str = os.getenv('USER_ACCOUNT_IDS', '')
-        self.profile_to_account_ids = {}
-        for grupo in account_ids_str.split(','):
-            grupo = grupo.strip()
-            if not grupo or ':' not in grupo:
-                continue
-            nombre, ids_str = grupo.split(':', 1)
-            nombre = nombre.strip()
-            if not nombre:
-                continue
-            ids = [i.strip() for i in ids_str.split('|') if i.strip()]
-            if ids:
-                self.profile_to_account_ids[nombre] = ids
-
         # Dueño del bot: si está configurado, recibe un aviso corto cada vez
         # que un perfil nuevo se registra solo (registro abierto -- alguien
         # que nunca fue agregado a mano le escribió al bot por primera vez).

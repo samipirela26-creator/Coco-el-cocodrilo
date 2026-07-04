@@ -53,15 +53,16 @@ def _cuenta_nueva_confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 def _tipo_transferencia_keyboard() -> InlineKeyboardMarkup:
-    """Botones para cuando Gemini no está seguro (sin dato propio que
-    comparar en el campo "Identificación" de la captura, ver
-    build_image_prompt) de si una captura de Pago Móvil/transferencia fue un
-    gasto o un ingreso -- en vez de adivinar y arriesgarse a dañar el saldo,
-    se le pregunta directo al usuario. Ver _pedir_confirmacion_tipo_transferencia
-    y tipo_transferencia_callback en handlers.py."""
+    """Botones que SIEMPRE se muestran para confirmar toda captura de Pago
+    Móvil/transferencia antes de guardar nada -- Coco ya no intenta adivinar
+    con certeza si el dinero entró o salió (esa lógica basada en comparar la
+    cédula del usuario resultó poco confiable), así que se confirma siempre
+    con el usuario. Ver _pedir_confirmacion_tipo_transferencia y
+    tipo_transferencia_callback en handlers.py."""
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("💸 Fue un gasto", callback_data="coco_tipotransf:gasto"),
-        InlineKeyboardButton("💵 Fue un ingreso", callback_data="coco_tipotransf:ingreso"),
+        InlineKeyboardButton("⬇️ Salida", callback_data="coco_tipotransf:gasto"),
+        InlineKeyboardButton("⬆️ Entrada", callback_data="coco_tipotransf:ingreso"),
+        InlineKeyboardButton("↩️ Deshacer", callback_data="coco_tipotransf:cancelar"),
     ]])
 
 

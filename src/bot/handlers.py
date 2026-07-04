@@ -3,7 +3,6 @@ de saldo/transferencia) y notas de voz. Comparten el guardado/confirmación
 vía `_save_and_confirm`.
 """
 import logging
-import re
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.llm.prompt_builder import build_prompt
@@ -259,21 +258,33 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
 
 async def _pedir_confirmacion_tipo_transferencia(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                                   data: dict, user_id: int, perfil: str, prefix: str) -> None:
-    """Cuando Gemini marcó 'tipo_incierto': true en una captura de
-    transferencia (no encontró ningún dato propio del usuario -- cédula/
-    teléfono -- para comparar contra el campo "Identificación", ver
-    build_image_prompt), en vez de arriesgarse a adivinar mal si fue gasto o
-    ingreso, se le pregunta directo al usuario con botones. Guarda los datos
-    ya parseados en `context.user_data` hasta que llegue la respuesta (ver
-    tipo_transferencia_callback)."""
+    """Para TODA captura de Pago Móvil/transferencia se le pregunta al
+    usuario con botones si el movimiento fue una salida o una entrada --
+    Coco ya no intenta adivinarlo comparando cédulas (ese enfoque resultó
+    poco confiable, ver prompt_builder.build_image_prompt), así que siempre
+    se confirma con el usuario antes de guardar nada. Guarda los datos ya
+    parseados en `context.user_data` hasta que llegue la respuesta (ver
+    tipo_transferencia_callback).
+
+    La primera vez que un perfil pasa por este flujo (después de esta
+    actualización) se le explica brevemente cómo funciona, ver
+    db.has_seen_pago_movil_intro/mark_pago_movil_intro_seen."""
     context.user_data['pending_tipo_transferencia'] = {
         'data': data, 'user_id': user_id, 'perfil': perfil, 'prefix': prefix,
     }
+    db: DBClient = context.bot_data['db']
+    if not db.has_seen_pago_movil_intro(perfil):
+        db.mark_pago_movil_intro_seen(perfil)
+        await update.message.reply_text(
+            "🐊 Antes de seguir: cada vez que me mandes una captura de Pago Móvil o transferencia "
+            "te voy a preguntar con botones si fue una salida (gasto) o una entrada (ingreso) -- "
+            "así no me arriesgo a adivinar mal. Si te equivocas de botón, usa \"↩️ Deshacer\" y no "
+            "guardo nada."
+        )
     simbolo = MONEDA_SIMBOLO.get(data.get('moneda', 'Bs'), '')
     monto = data.get('monto', 0)
     await update.message.reply_text(
-        f"{prefix}🐊 No estoy seguro si este movimiento de {simbolo} {monto:,.2f} fue un gasto o un "
-        f"ingreso (no encontré su cédula/teléfono en la captura para comparar). ¿Cuál de los dos fue?",
+        f"{prefix}🐊 Detecté un movimiento de {simbolo} {monto:,.2f}. ¿Fue una salida o una entrada?",
         reply_markup=_tipo_transferencia_keyboard(),
     )
 
@@ -288,9 +299,9 @@ async def tipo_transferencia_callback(update: Update, context: ContextTypes.DEFA
     decision = (query.data or "").split(":", 1)[-1]
     pending = context.user_data.pop('pending_tipo_transferencia', None)
     await query.answer()
-    if decision not in ('gasto', 'ingreso') or not pending:
+    if decision == 'cancelar' or decision not in ('gasto', 'ingreso') or not pending:
         try:
-            await query.edit_message_text("🐊 Cancelado, no registré nada.")
+            await query.edit_message_text("🐊 Deshecho, no registré nada de esa captura.")
         except Exception:
             pass
         return
@@ -366,63 +377,11 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Mensajes de texto
 # ---------------------------------------------------------------------- #
 
-def _cuentas_propias(db: DBClient, context: ContextTypes.DEFAULT_TYPE, perfil: str) -> list:
-    """Identificadores propios (cédula/teléfono) de este perfil, combinando
-    los cargados desde USER_ACCOUNT_IDS en .env (bot_data, manual) con los
-    guardados en la DB por conversación (ver _pedir_cedula), sin repetir."""
-    de_config = context.bot_data.get('profile_to_account_ids', {}).get(perfil) or []
-    de_db = db.get_account_ids(perfil)
-    vistos, resultado = set(), []
-    for i in list(de_config) + de_db:
-        if i not in vistos:
-            vistos.add(i)
-            resultado.append(i)
-    return resultado
-
-
-async def _pedir_cedula(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
-                         image_bytes: bytes = None, mime_type: str = None) -> None:
-    """Guarda la captura pendiente (si la hay) y le pregunta la cédula al
-    usuario -- se usa la primera vez que un perfil manda una captura de Pago
-    Móvil sin tener ningún identificador propio registrado (ni en .env ni en
-    la DB), y también proactivamente al arrancar el bot (ver _pedir_cedula_al_
-    arrancar en src/main.py), en cuyo caso image_bytes/mime_type quedan en
-    None -- no hay ninguna captura que retomar, solo se guarda la cédula.
-    La respuesta de texto se intercepta en handle_message antes de tratarla
-    como un gasto/ingreso (ver el chequeo de 'esperando_cedula')."""
-    context.user_data['esperando_cedula'] = {
-        'image_bytes': image_bytes,
-        'mime_type': mime_type,
-    }
-    await update.message.reply_text(
-        "🐊 Para no confundir si el dinero entró o salió en tus capturas de Pago Móvil, "
-        "necesito tu número de cédula (el mismo que usas para recibir/enviar Pago Móvil).\n\n"
-        "Respóndeme solo con el número, por favor."
-    )
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
     message = update.message
     if not message.text:
-        return
-
-    pendiente = context.user_data.get('esperando_cedula')
-    if pendiente:
-        cedula = re.sub(r'\D', '', message.text)
-        if len(cedula) < 6:
-            await update.message.reply_text(
-                "❌ Ese número no parece una cédula válida. Respóndeme solo con los dígitos, por favor."
-            )
-            return
-        del context.user_data['esperando_cedula']
-        db: DBClient = context.bot_data['db']
-        perfil = _perfil_de(update.effective_user.id, context)
-        db.add_account_id(perfil, cedula)
-        await update.message.reply_text("✅ Listo, guardé tu cédula. Ya puedo distinguir tus ingresos de tus gastos en Pago Móvil.")
-        if pendiente.get('image_bytes'):
-            await _procesar_foto(update, context, pendiente['image_bytes'], pendiente['mime_type'])
         return
 
     await handle_text_message(message.text, update, context)
@@ -517,11 +476,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     photo_file = await photo.get_file()
     image_bytes = bytes(await photo_file.download_as_bytearray())
 
-    db: DBClient = context.bot_data['db']
-    if not _cuentas_propias(db, context, perfil):
-        await _pedir_cedula(update, context, image_bytes=image_bytes, mime_type="image/jpeg")
-        return
-
     await _procesar_foto(update, context, image_bytes, "image/jpeg")
 
 
@@ -539,9 +493,8 @@ async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     try:
         dynamic_categories = db.get_dynamic_categories(perfil)
-        cuentas_propias = _cuentas_propias(db, context, perfil)
         data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories,
-                                            mime_type=mime_type, cuentas_propias=cuentas_propias)
+                                            mime_type=mime_type)
         logger.debug(f"Datos extraídos de la imagen: {data}")
 
         captura_tipo = data.get('captura_tipo')
@@ -570,11 +523,7 @@ async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
             return
 
         prefix = "📸 Captura de transferencia detectada.\n\n"
-        if data.get('tipo_incierto'):
-            await _pedir_confirmacion_tipo_transferencia(update, context, data, user_id, perfil, prefix)
-            return
-
-        await _save_and_confirm(data, user_id, perfil, db, update, context, prefix=prefix, fuente='foto')
+        await _pedir_confirmacion_tipo_transferencia(update, context, data, user_id, perfil, prefix)
 
     except (GeminiConnectionError,):
         await update.message.reply_text("❌ Error de conexión con Gemini. Intente más tarde.")

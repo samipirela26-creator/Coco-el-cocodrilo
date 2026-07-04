@@ -214,19 +214,19 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
     return f"{system_prompt}\n\nUsuario: {user_message}\n\nAsistente:"
 
 
-def build_image_prompt(categories: list, dynamic_categories: list = None, cuentas_propias: list = None) -> str:
+def build_image_prompt(categories: list, dynamic_categories: list = None) -> str:
     """
     Prompt para analizar una captura de pantalla (transferencia o saldo bancario).
 
-    Args:
-        cuentas_propias: identificadores propios del usuario (ej. cédula sin
-            "V-", teléfono de Pago Móvil) para comparar contra el campo
-            "Identificación" de la captura (que en Pago Móvil venezolano
-            SIEMPRE es la cédula/RIF del BENEFICIARIO -- quien paga debe
-            ingresar identificación, teléfono y banco del que RECIBE, nunca
-            los suyos propios) y saber con certeza si el dinero entró o
-            salió, en vez de adivinar solo por el texto/iconos de la imagen
-            (ver Config.profile_to_account_ids).
+    Nota: el "tipo" (gasto/ingreso) que el modelo devuelve para una
+    "transferencia" es solo una estimación de referencia -- el bot SIEMPRE
+    le pregunta al usuario con botones (Salida/Entrada) antes de guardar
+    nada, ver _pedir_confirmacion_tipo_transferencia en src/bot/handlers.py.
+    Se abandonó el intento anterior de adivinar con certeza comparando la
+    cédula del usuario contra el campo "Identificación" del comprobante:
+    resultó ser una fuente de errores difíciles de depurar (el significado
+    de ese campo varía según la app/banco), así que ahora se confirma
+    siempre con el usuario en vez de arriesgarse a adivinar mal.
 
     Returns:
         Prompt completo para enviar junto con la imagen a Gemini Vision.
@@ -234,31 +234,6 @@ def build_image_prompt(categories: list, dynamic_categories: list = None, cuenta
     today = datetime.now().strftime("%Y-%m-%d")
     categories_str = '", "'.join(categories)
     dynamic_categories_str = '", "'.join(dynamic_categories) if dynamic_categories else ""
-
-    cuentas_hint = ""
-    if cuentas_propias:
-        cuentas_str = '", "'.join(cuentas_propias)
-        cuentas_hint = f"""
-
-DATOS PROPIOS DEL USUARIO (cédula y/o teléfono): "{cuentas_str}".
-
-REGLA CLAVE de Pago Móvil en Venezuela: en el comprobante, el campo "Identificación" (cuando
-aparece como un campo propio, separado de "Origen"/"Destino") es SIEMPRE la cédula/RIF del
-BENEFICIARIO -- es decir, de quien RECIBE el dinero -- porque quien paga tiene que ingresar la
-identificación, el teléfono y el banco de la persona a la que le está pagando, nunca los suyos
-propios. Por lo tanto:
-- Si el dato propio del usuario coincide con el campo "Identificación" del comprobante (basta con
-  que coincidan los últimos dígitos si el número está parcialmente oculto con asteriscos), el
-  usuario fue el BENEFICIARIO -> el dinero ENTRÓ -> "tipo": "ingreso", sin importar lo que digan
-  otros textos de la imagen (ej. aunque diga "enviado" o "pago móvil realizado").
-- Si el dato propio del usuario NO coincide con "Identificación" (esa cédula es de otra persona),
-  entonces el usuario fue quien envió el pago -> "tipo": "gasto".
-Si la captura NO tiene un campo "Identificación" separado, usa como respaldo los campos "Origen"/
-"Destino": si el dato propio aparece en "Destino" es ingreso, si aparece en "Origen" es gasto.
-Esta comparación de datos propios tiene PRIORIDAD sobre cualquier otra pista visual si hay conflicto.
-Si NINGUNO de los datos propios del usuario aparece en ningún campo de la captura (no hay forma de
-comparar con certeza), pon tu mejor estimación en "tipo" igual, pero marca "tipo_incierto": true
-para que se le pregunte al usuario con botones en vez de arriesgarse a adivinar mal."""
 
     system_prompt = f"""Eres un asistente contable personal que analiza capturas de pantalla
 de aplicaciones bancarias o de pago (ej. Banesco, Mercantil, BDV, Binance, Zelle, Pago Móvil).
@@ -271,11 +246,11 @@ Existen tres tipos de captura posibles:
    menciona explícitamente "diezmo" (ej. una transferencia con motivo "diezmo" o "ofrenda-diezmo").
 
 Responde EXCLUSIVAMENTE con un objeto JSON con este formato:
-{{"captura_tipo": <"transferencia", "saldo" o "diezmo_pagado">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia">, "tipo_incierto": <bool, true SOLO si captura_tipo es "transferencia" y no pudiste confirmar "tipo" con certeza, ver más abajo>, "monto": <float, siempre positivo, 0 si captura_tipo es "diezmo_pagado">, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda clara>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
+{{"captura_tipo": <"transferencia", "saldo" o "diezmo_pagado">, "tipo": <"gasto" o "ingreso", solo si captura_tipo es "transferencia" -- tu mejor estimación, el usuario la confirmará después>, "monto": <float, siempre positivo, 0 si captura_tipo es "diezmo_pagado">, "categoria": <string, solo si captura_tipo es "transferencia">, "moneda": <"Bs", "USD" o "COP", null si es diezmo_pagado sin moneda clara>, "cuenta": <"BDV", "Binance" o "Efectivo">, "fecha": <string formato Y-m-d>, "descripcion": <string>, "respuesta": <string, muy corta, en la voz de Coco>}}
 {_shared_rules(categories_str, dynamic_categories_str)}
 Reglas adicionales:
 - Si es una confirmación de transferencia donde el usuario ENVÍA dinero (paga algo, transfiere a otra persona/comercio), "tipo" es "gasto".
-- Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".{cuentas_hint}
+- Si es una confirmación donde el usuario RECIBE dinero, "tipo" es "ingreso".
 - Si es una pantalla de saldo de cuenta (no un movimiento), usa "captura_tipo": "saldo" y en "monto" pon el saldo mostrado.
   En este caso "tipo", "categoria" y "descripcion" pueden omitirse o dejarse vacíos.
 - Si el concepto/motivo de la transferencia menciona explícitamente "diezmo", usa
