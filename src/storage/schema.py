@@ -185,6 +185,23 @@ class SchemaMixin:
             )
         """)
 
+        # Identificadores propios por perfil (cédula, y opcionalmente teléfono
+        # de Pago Móvil) capturados por CONVERSACIÓN (el bot los pregunta la
+        # primera vez que hace falta, ver _pedir_cedula en src/bot/handlers.py),
+        # a diferencia de USER_ACCOUNT_IDS en .env que es la variante manual.
+        # Se usan para que el LLM compare "Origen"/"Destino" en capturas de
+        # Pago Móvil y sepa con certeza si fue ingreso o gasto (ver
+        # build_image_prompt en src/llm/prompt_builder.py). Ver
+        # AccessControlMixin.get_account_ids / add_account_id.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS profile_account_ids (
+                perfil TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (perfil, account_id)
+            )
+        """)
+
         # wallets: la clave primaria cambia (ahora incluye perfil), así que si
         # la tabla existe con el esquema viejo (sin perfil) hay que migrarla
         # copiando los datos al perfil legacy en vez de solo agregar la columna.

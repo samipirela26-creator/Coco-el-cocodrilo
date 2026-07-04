@@ -3,6 +3,7 @@ de saldo/transferencia) y notas de voz. Comparten el guardado/confirmación
 vía `_save_and_confirm`.
 """
 import logging
+import re
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.llm.prompt_builder import build_prompt
@@ -315,12 +316,61 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Mensajes de texto
 # ---------------------------------------------------------------------- #
 
+def _cuentas_propias(db: DBClient, context: ContextTypes.DEFAULT_TYPE, perfil: str) -> list:
+    """Identificadores propios (cédula/teléfono) de este perfil, combinando
+    los cargados desde USER_ACCOUNT_IDS en .env (bot_data, manual) con los
+    guardados en la DB por conversación (ver _pedir_cedula), sin repetir."""
+    de_config = context.bot_data.get('profile_to_account_ids', {}).get(perfil) or []
+    de_db = db.get_account_ids(perfil)
+    vistos, resultado = set(), []
+    for i in list(de_config) + de_db:
+        if i not in vistos:
+            vistos.add(i)
+            resultado.append(i)
+    return resultado
+
+
+async def _pedir_cedula(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
+                         image_bytes: bytes, mime_type: str) -> None:
+    """Guarda la captura pendiente y le pregunta la cédula al usuario -- se
+    usa solo la primera vez que un perfil manda una captura de Pago Móvil sin
+    tener ningún identificador propio registrado (ni en .env ni en la DB).
+    La respuesta de texto se intercepta en handle_message antes de tratarla
+    como un gasto/ingreso (ver el chequeo de 'esperando_cedula')."""
+    context.user_data['esperando_cedula'] = {
+        'image_bytes': image_bytes,
+        'mime_type': mime_type,
+    }
+    await update.message.reply_text(
+        "🐊 Para no confundir si el dinero entró o salió en tus capturas de Pago Móvil, "
+        "necesito tu número de cédula (el mismo que usas para recibir/enviar Pago Móvil).\n\n"
+        "Respóndeme solo con el número, por favor."
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
     message = update.message
     if not message.text:
         return
+
+    pendiente = context.user_data.get('esperando_cedula')
+    if pendiente:
+        cedula = re.sub(r'\D', '', message.text)
+        if len(cedula) < 6:
+            await update.message.reply_text(
+                "❌ Ese número no parece una cédula válida. Respóndeme solo con los dígitos, por favor."
+            )
+            return
+        del context.user_data['esperando_cedula']
+        db: DBClient = context.bot_data['db']
+        perfil = _perfil_de(update.effective_user.id, context)
+        db.add_account_id(perfil, cedula)
+        await update.message.reply_text("✅ Listo, guardé tu cédula. Ya puedo distinguir tus ingresos de tus gastos en Pago Móvil.")
+        await _procesar_foto(update, context, pendiente['image_bytes'], pendiente['mime_type'])
+        return
+
     await handle_text_message(message.text, update, context)
 
 
@@ -405,23 +455,39 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _check_cooldown(update, context):
         return
 
+    perfil = _perfil_de(update.effective_user.id, context)
+    await _maybe_welcome_new_profile(update, context, perfil)
+
+    await update.message.chat.send_action(action="typing")
+    photo = update.message.photo[-1]  # mayor resolución
+    photo_file = await photo.get_file()
+    image_bytes = bytes(await photo_file.download_as_bytearray())
+
+    db: DBClient = context.bot_data['db']
+    if not _cuentas_propias(db, context, perfil):
+        await _pedir_cedula(update, context, image_bytes=image_bytes, mime_type="image/jpeg")
+        return
+
+    await _procesar_foto(update, context, image_bytes, "image/jpeg")
+
+
+async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                          image_bytes: bytes, mime_type: str) -> None:
+    """Analiza la captura ya descargada con Gemini Vision y decide el flujo
+    según 'captura_tipo' -- separado de handle_photo para poder reusarlo
+    cuando la captura quedó pendiente esperando la cédula del usuario (ver
+    _pedir_cedula)."""
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)
-    await _maybe_welcome_new_profile(update, context, perfil)
     llm_connector = context.bot_data['llm_connector']
     db: DBClient = context.bot_data['db']
     categories = context.bot_data['categories']
 
     try:
-        await update.message.chat.send_action(action="typing")
-
-        photo = update.message.photo[-1]  # mayor resolución
-        photo_file = await photo.get_file()
-        image_bytes = bytes(await photo_file.download_as_bytearray())
-
         dynamic_categories = db.get_dynamic_categories(perfil)
-        cuentas_propias = context.bot_data.get('profile_to_account_ids', {}).get(perfil)
-        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories, cuentas_propias=cuentas_propias)
+        cuentas_propias = _cuentas_propias(db, context, perfil)
+        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories,
+                                            mime_type=mime_type, cuentas_propias=cuentas_propias)
         logger.debug(f"Datos extraídos de la imagen: {data}")
 
         captura_tipo = data.get('captura_tipo')

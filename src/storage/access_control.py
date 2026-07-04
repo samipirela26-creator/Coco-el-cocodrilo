@@ -65,3 +65,21 @@ class AccessControlMixin:
             "SELECT user_id, nombre, blocked_at FROM blocked_users ORDER BY blocked_at DESC"
         ).fetchall()
         return [{"user_id": r[0], "nombre": r[1], "blocked_at": r[2]} for r in rows]
+
+    def get_account_ids(self, perfil: str) -> list:
+        """Cédulas/teléfonos guardados para este perfil (capturados por
+        conversación, ver _pedir_cedula en src/bot/handlers.py)."""
+        rows = self._conn.execute(
+            "SELECT account_id FROM profile_account_ids WHERE perfil = ?", (perfil,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def add_account_id(self, perfil: str, account_id: str) -> None:
+        """Guarda una cédula/teléfono nuevo para este perfil (idempotente)."""
+        self._conn.execute(
+            """INSERT OR IGNORE INTO profile_account_ids (perfil, account_id, created_at)
+               VALUES (?, ?, ?)""",
+            (perfil, account_id, datetime.now().isoformat())
+        )
+        self._conn.commit()
+        logger.info(f"Cédula/identificador guardado para perfil '{perfil}'")

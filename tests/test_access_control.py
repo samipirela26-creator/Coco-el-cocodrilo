@@ -24,6 +24,28 @@ def test_track_user_guarda_el_nombre_mas_reciente(db):
     assert conocido["nombre"] == "Juan Perez"
 
 
+def test_get_account_ids_perfil_sin_cedula_registrada(db):
+    assert db.get_account_ids("samuel") == []
+
+
+def test_add_account_id_y_get_account_ids(db):
+    db.add_account_id("samuel", "30174951")
+    assert db.get_account_ids("samuel") == ["30174951"]
+
+
+def test_add_account_id_es_idempotente(db):
+    db.add_account_id("samuel", "30174951")
+    db.add_account_id("samuel", "30174951")
+    assert db.get_account_ids("samuel") == ["30174951"]
+
+
+def test_add_account_id_aislado_por_perfil(db):
+    db.add_account_id("samuel", "30174951")
+    db.add_account_id("otro", "11111111")
+    assert db.get_account_ids("samuel") == ["30174951"]
+    assert db.get_account_ids("otro") == ["11111111"]
+
+
 def test_list_blocked_incluye_a_todos_los_bloqueados(db):
     db.block_user(1, "Uno", blocked_by=999)
     db.block_user(2, "Dos", blocked_by=999)
