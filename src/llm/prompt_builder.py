@@ -220,10 +220,13 @@ def build_image_prompt(categories: list, dynamic_categories: list = None, cuenta
 
     Args:
         cuentas_propias: identificadores propios del usuario (ej. cédula sin
-            "V-", teléfono de Pago Móvil) para comparar contra los campos
-            "Origen"/"Destino"/"Identificación" de la captura y saber con
-            certeza si el dinero entró o salió, en vez de adivinar solo por
-            el texto/iconos de la imagen (ver Config.profile_to_account_ids).
+            "V-", teléfono de Pago Móvil) para comparar contra el campo
+            "Identificación" de la captura (que en Pago Móvil venezolano
+            SIEMPRE es la cédula/RIF del BENEFICIARIO -- quien paga debe
+            ingresar identificación, teléfono y banco del que RECIBE, nunca
+            los suyos propios) y saber con certeza si el dinero entró o
+            salió, en vez de adivinar solo por el texto/iconos de la imagen
+            (ver Config.profile_to_account_ids).
 
     Returns:
         Prompt completo para enviar junto con la imagen a Gemini Vision.
@@ -237,14 +240,21 @@ def build_image_prompt(categories: list, dynamic_categories: list = None, cuenta
         cuentas_str = '", "'.join(cuentas_propias)
         cuentas_hint = f"""
 
-DATOS PROPIOS DEL USUARIO (cédula y/o teléfono): "{cuentas_str}". Si la captura muestra campos
-como "Origen", "Destino" o "Identificación" con números de cuenta/teléfono/cédula, compara esos
-números contra los datos propios de arriba (basta con que coincidan los últimos dígitos visibles,
-ya que algunos apps ocultan parte del número con asteriscos):
-- Si el dato propio aparece en "Destino" (o como identificación del que RECIBE), el dinero ENTRÓ
-  a la cuenta del usuario -> "tipo": "ingreso", sin importar lo que digan otros textos de la imagen.
-- Si el dato propio aparece en "Origen" (o como identificación del que ENVÍA), el dinero SALIÓ de
-  la cuenta del usuario -> "tipo": "gasto".
+DATOS PROPIOS DEL USUARIO (cédula y/o teléfono): "{cuentas_str}".
+
+REGLA CLAVE de Pago Móvil en Venezuela: en el comprobante, el campo "Identificación" (cuando
+aparece como un campo propio, separado de "Origen"/"Destino") es SIEMPRE la cédula/RIF del
+BENEFICIARIO -- es decir, de quien RECIBE el dinero -- porque quien paga tiene que ingresar la
+identificación, el teléfono y el banco de la persona a la que le está pagando, nunca los suyos
+propios. Por lo tanto:
+- Si el dato propio del usuario coincide con el campo "Identificación" del comprobante (basta con
+  que coincidan los últimos dígitos si el número está parcialmente oculto con asteriscos), el
+  usuario fue el BENEFICIARIO -> el dinero ENTRÓ -> "tipo": "ingreso", sin importar lo que digan
+  otros textos de la imagen (ej. aunque diga "enviado" o "pago móvil realizado").
+- Si el dato propio del usuario NO coincide con "Identificación" (esa cédula es de otra persona),
+  entonces el usuario fue quien envió el pago -> "tipo": "gasto".
+Si la captura NO tiene un campo "Identificación" separado, usa como respaldo los campos "Origen"/
+"Destino": si el dato propio aparece en "Destino" es ingreso, si aparece en "Origen" es gasto.
 Esta comparación de datos propios tiene PRIORIDAD sobre cualquier otra pista visual si hay conflicto."""
 
     system_prompt = f"""Eres un asistente contable personal que analiza capturas de pantalla
