@@ -17,6 +17,7 @@ from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
 from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard
 from src.bot.formatters import _format_rates_block, _rate_variation_pct, format_diezmo_pagado_message
+from src.bot.verses import pick_verse
 from src.bot.texts import _welcome_text, _help_text
 from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI
 from src.reports.weekly_image import render_monthly_report, MESES_ES
@@ -366,6 +367,12 @@ async def _send_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE, year
         lines.append("")
 
     lines.append(_format_rates_block(bcv, binance))
+
+    total_gastos = sum(s['total_gastos'] for s in summaries.values())
+    total_ingresos = sum(s['total_ingresos'] for s in summaries.values())
+    buen_mes = total_ingresos >= total_gastos
+    lines.append("")
+    lines.append(pick_verse(buen_mes))
 
     await _reply(update, '\n'.join(lines), reply_markup=nav_keyboard)
 
