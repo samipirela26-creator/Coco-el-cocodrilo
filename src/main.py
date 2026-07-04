@@ -169,6 +169,39 @@ COMANDOS_DUENO = [
 ]
 
 
+CEDULA_AL_ARRANCAR_TEXTO = (
+    "🐊 Antes de seguir: para no confundir si el dinero entró o salió en tus "
+    "capturas de Pago Móvil, necesito tu número de cédula (el mismo que usas "
+    "para recibir/enviar Pago Móvil).\n\n"
+    "Respóndeme solo con el número, por favor."
+)
+
+
+async def _pedir_cedula_al_arrancar(application) -> None:
+    """Al arrancar el bot, le pregunta proactivamente la cédula a cada perfil
+    que todavía no tenga ninguna registrada (ni en USER_ACCOUNT_IDS del .env
+    ni en la DB) -- así queda en la memoria de Coco de una vez, sin esperar a
+    que mande una captura de Pago Móvil (ver _pedir_cedula en
+    src/bot/handlers.py, que maneja la respuesta de texto)."""
+    db: DBClient = application.bot_data['db']
+    config_mapping = application.bot_data.get('profile_to_user_ids') or {}
+    profile_to_user_ids = _perfiles_con_user_ids(config_mapping, db)
+    account_ids_config = application.bot_data.get('profile_to_account_ids') or {}
+
+    for perfil, user_ids in profile_to_user_ids.items():
+        ya_tiene = bool(account_ids_config.get(perfil)) or bool(db.get_account_ids(perfil))
+        if ya_tiene:
+            continue
+        for user_id in user_ids:
+            try:
+                await application.bot.send_message(chat_id=user_id, text=CEDULA_AL_ARRANCAR_TEXTO)
+                application.user_data[user_id]['esperando_cedula'] = {
+                    'image_bytes': None, 'mime_type': None,
+                }
+            except Exception as e:
+                logger.error(f"No se pudo pedir la cédula al arrancar a {user_id} ({perfil}): {e}")
+
+
 async def _post_init(application) -> None:
     """Registra los comandos con Telegram (setMyCommands) al arrancar, para
     que el botón de menú (☰) de Telegram los muestre. Se corre una sola vez
@@ -185,6 +218,7 @@ async def _post_init(application) -> None:
         except Exception as e:
             logger.warning(f"No se pudo registrar el menú de comandos del dueño: {e}")
     logger.info("Menú de comandos (☰) registrado en Telegram.")
+    await _pedir_cedula_al_arrancar(application)
 
 
 def main():

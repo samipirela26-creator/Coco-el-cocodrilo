@@ -331,10 +331,13 @@ def _cuentas_propias(db: DBClient, context: ContextTypes.DEFAULT_TYPE, perfil: s
 
 
 async def _pedir_cedula(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
-                         image_bytes: bytes, mime_type: str) -> None:
-    """Guarda la captura pendiente y le pregunta la cédula al usuario -- se
-    usa solo la primera vez que un perfil manda una captura de Pago Móvil sin
-    tener ningún identificador propio registrado (ni en .env ni en la DB).
+                         image_bytes: bytes = None, mime_type: str = None) -> None:
+    """Guarda la captura pendiente (si la hay) y le pregunta la cédula al
+    usuario -- se usa la primera vez que un perfil manda una captura de Pago
+    Móvil sin tener ningún identificador propio registrado (ni en .env ni en
+    la DB), y también proactivamente al arrancar el bot (ver _pedir_cedula_al_
+    arrancar en src/main.py), en cuyo caso image_bytes/mime_type quedan en
+    None -- no hay ninguna captura que retomar, solo se guarda la cédula.
     La respuesta de texto se intercepta en handle_message antes de tratarla
     como un gasto/ingreso (ver el chequeo de 'esperando_cedula')."""
     context.user_data['esperando_cedula'] = {
@@ -368,7 +371,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         perfil = _perfil_de(update.effective_user.id, context)
         db.add_account_id(perfil, cedula)
         await update.message.reply_text("✅ Listo, guardé tu cédula. Ya puedo distinguir tus ingresos de tus gastos en Pago Móvil.")
-        await _procesar_foto(update, context, pendiente['image_bytes'], pendiente['mime_type'])
+        if pendiente.get('image_bytes'):
+            await _procesar_foto(update, context, pendiente['image_bytes'], pendiente['mime_type'])
         return
 
     await handle_text_message(message.text, update, context)
