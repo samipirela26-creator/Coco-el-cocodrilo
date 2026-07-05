@@ -15,7 +15,10 @@ from src.storage.db import DBClient
 from src.services import fx
 from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
-from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard, _deshacer_confirm_keyboard
+from src.bot.replies import (
+    _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard, _deshacer_confirm_keyboard,
+    _borrar_todo_confirm_keyboard,
+)
 from src.bot.formatters import _format_rates_block, _rate_variation_pct, format_diezmo_pagado_message
 from src.bot.verses import pick_verse
 from src.bot.texts import _welcome_text, _help_text
@@ -48,6 +51,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await cambio_command(update, context)
     elif accion == "ayuda":
         await help_command(update, context)
+    elif accion == "borrartodo":
+        await borrar_todo_command(update, context)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -526,6 +531,59 @@ async def deshacer_confirmacion_callback(update: Update, context: ContextTypes.D
         return
 
     await query.edit_message_text(_formatear_deshecho(deshecho))
+
+
+async def borrar_todo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/borrar_todo (y botón "🗑️ Borrar todo" del /menu): borra TODOS los
+    datos financieros de este perfil -- transacciones, saldos, presupuestos,
+    diezmo, deudas, metas de ahorro, categorías dinámicas -- y deja las
+    billeteras en 0, como si el perfil empezara de cero. Es irreversible
+    (aunque queda cubierto por el backup diario automático, ver
+    DBClient.respaldo_diario), así que primero pide confirmar con botones
+    (ver borrar_todo_confirmacion_callback) -- NUNCA se borra nada solo con
+    este comando."""
+    if not _is_allowed(update, context):
+        return
+    perfil = _perfil_de(update.effective_user.id, context)
+    context.user_data['pending_borrar_todo'] = {'perfil': perfil}
+    await _reply(
+        update,
+        "🐊 ¿Está SEGURO? Esto borra TODOS sus datos: gastos, ingresos, saldos, "
+        "presupuestos, diezmo, deudas y metas de ahorro. No hay forma de deshacerlo "
+        "desde el bot.\n\nSi de verdad quiere empezar de cero, confirme con el botón.",
+        reply_markup=_borrar_todo_confirm_keyboard(),
+    )
+
+
+async def borrar_todo_confirmacion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de borrar_todo_command: solo AHORA se ejecuta el borrado real
+    (ver DBClient.reset_profile), o se cancela sin tocar nada si el usuario
+    dijo que no."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_borrar_todo', None)
+    await query.answer()
+    if decision != "si" or not pending:
+        try:
+            await query.edit_message_text("🐊 Entendido, no borré nada.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
+    try:
+        db.reset_profile(pending['perfil'])
+    except StorageError as e:
+        await query.edit_message_text(f"❌ Error al borrar los datos: {e}")
+        return
+
+    await query.edit_message_text(
+        "🐊 Listo, borré todos sus datos. Quedó como un perfil nuevo -- billeteras en 0 "
+        "y sin gastos/ingresos registrados."
+    )
 
 
 async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

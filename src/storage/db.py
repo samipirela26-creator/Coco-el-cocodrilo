@@ -51,6 +51,7 @@ from src.storage.fx_cache import FxCacheMixin
 from src.storage.access_control import AccessControlMixin
 from src.storage.debts import DebtsMixin
 from src.storage.savings import SavingsMixin
+from src.storage.reset import ResetMixin
 # Re-exportados por compatibilidad: código previo podía importar estos
 # nombres directamente desde `src.storage.db`.
 from src.storage.constants import (  # noqa: F401
@@ -62,7 +63,7 @@ logger = logging.getLogger('gastos-bot')
 
 
 class DBClient(SchemaMixin, WalletsMixin, TransactionsMixin, BudgetsMixin, TithesMixin, FxCacheMixin,
-                AccessControlMixin, DebtsMixin, SavingsMixin):
+                AccessControlMixin, DebtsMixin, SavingsMixin, ResetMixin):
     """Cliente para leer/escribir transacciones y billeteras en SQLite.
 
     Todos los métodos que tocan datos financieros reciben un `perfil` (str)

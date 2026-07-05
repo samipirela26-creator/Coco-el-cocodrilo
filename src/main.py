@@ -19,6 +19,7 @@ from src.bot.commands import (
     resumen_nav_callback, deshacer_callback, deshacer_confirmacion_callback, diezmo_command, diezmo_pagado_command,
     bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
     cuenta_nueva_command, deudas_command, meta_nueva_command, metas_command,
+    borrar_todo_command, borrar_todo_confirmacion_callback,
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
@@ -152,6 +153,7 @@ COMANDOS_PUBLICOS = [
     BotCommand("metas", "Ver progreso de sus metas de ahorro"),
     BotCommand("meta_nueva", "Crear una meta de ahorro nueva"),
     BotCommand("deshacer", "Deshacer su último gasto/ingreso"),
+    BotCommand("borrar_todo", "Borrar TODOS sus datos (empezar de cero)"),
     BotCommand("saldo_inicial", "Fijar su saldo inicial en Bs"),
     BotCommand("cuenta_nueva", "Abrir una cuenta nueva (ej: otro banco)"),
     BotCommand("exportar", "Exportar sus movimientos a CSV"),
@@ -229,6 +231,7 @@ def main():
         application.add_handler(CommandHandler("tasas", cambio_command))
         application.add_handler(CommandHandler("exportar", exportar_command))
         application.add_handler(CommandHandler("deshacer", deshacer_command))
+        application.add_handler(CommandHandler("borrar_todo", borrar_todo_command))
         application.add_handler(CommandHandler("presupuesto", presupuesto_command))
         application.add_handler(CommandHandler("racha", racha_command))
         application.add_handler(CommandHandler("diezmo", diezmo_command))
@@ -245,6 +248,7 @@ def main():
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
         application.add_handler(CallbackQueryHandler(deshacer_confirmacion_callback, pattern=r"^coco_deshacerconf:"))
+        application.add_handler(CallbackQueryHandler(borrar_todo_confirmacion_callback, pattern=r"^coco_borrartodo:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))

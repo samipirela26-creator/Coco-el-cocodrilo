@@ -28,7 +28,20 @@ def _menu_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton("Resumen", callback_data="coco_menu:resumen")],
         [InlineKeyboardButton("Cambio", callback_data="coco_menu:cambio"),
          InlineKeyboardButton("Ayuda", callback_data="coco_menu:ayuda")],
+        [InlineKeyboardButton("🗑️ Borrar todo", callback_data="coco_menu:borrartodo")],
     ])
+
+
+def _borrar_todo_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Botones para confirmar/cancelar el borrado TOTAL de los datos de un
+    perfil (/borrar_todo, botón del /menu) -- es irreversible (aunque queda
+    cubierto por el backup diario automático, ver DBClient.respaldo_diario),
+    así que nunca se ejecuta sin este paso de confirmación explícita. Ver
+    _pedir_confirmacion_borrar_todo en handlers de commands.py."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚠️ Sí, borrar TODO", callback_data="coco_borrartodo:si"),
+        InlineKeyboardButton("❌ No, cancelar", callback_data="coco_borrartodo:no"),
+    ]])
 
 
 def _saldo_confirm_keyboard() -> InlineKeyboardMarkup:
