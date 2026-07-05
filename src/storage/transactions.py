@@ -54,6 +54,27 @@ class TransactionsMixin:
             self._conn.rollback()
             raise StorageError(f"Error al guardar transacción: {e}")
 
+    def peek_last_transaction(self, perfil: str) -> dict:
+        """Como `delete_last_transaction` pero de solo lectura -- no borra
+        nada ni toca la billetera. Se usa para mostrarle al usuario QUÉ se va
+        a deshacer antes de tocar nada (ver _pedir_confirmacion_deshacer en
+        src/bot/commands.py), porque "la última transacción" puede ser mucho
+        más vieja de lo que el usuario espera (ej. si encadena varios
+        /deshacer seguidos) y antes se borraba a ciegas sin mostrar aviso
+        previo."""
+        row = self._conn.execute(
+            """SELECT id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha
+               FROM transactions WHERE perfil = ? ORDER BY id DESC LIMIT 1""",
+            (perfil,)
+        ).fetchone()
+        if row is None:
+            return None
+        tx_id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha = row
+        return {
+            "id": tx_id, "tipo": tipo, "monto": monto, "moneda": moneda, "cuenta": cuenta,
+            "categoria": categoria, "descripcion": descripcion, "fecha": fecha,
+        }
+
     def delete_last_transaction(self, perfil: str) -> dict:
         """Deshace el último gasto/ingreso registrado DE ESTE PERFIL: revierte
         el delta en la billetera correspondiente y borra la fila de
@@ -69,6 +90,45 @@ class TransactionsMixin:
             """SELECT id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha
                FROM transactions WHERE perfil = ? ORDER BY id DESC LIMIT 1""",
             (perfil,)
+        ).fetchone()
+        if row is None:
+            return None
+        tx_id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha = row
+        try:
+            delta = -monto if tipo == 'ingreso' else monto  # revierte el delta original
+            self._conn.execute(
+                "UPDATE wallets SET balance = balance + ?, updated_at = ? "
+                "WHERE perfil = ? AND moneda = ? AND cuenta = ?",
+                (delta, datetime.now().isoformat(), perfil, moneda, cuenta)
+            )
+            self._conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+            self._conn.commit()
+            if tipo == 'ingreso':
+                self.revert_tithe_from_income(perfil, moneda, monto)
+            nuevo_balance = self.get_wallet_balance(perfil, moneda, cuenta)
+            logger.info(f"Transacción deshecha [{perfil}]: id={tx_id} {tipo} {moneda}/{cuenta} {monto} - {categoria}")
+            return {
+                "tipo": tipo, "monto": monto, "moneda": moneda, "cuenta": cuenta,
+                "categoria": categoria, "descripcion": descripcion, "fecha": fecha,
+                "nuevo_balance": nuevo_balance,
+            }
+        except sqlite3.Error as e:
+            self._conn.rollback()
+            raise StorageError(f"Error al deshacer la transacción: {e}")
+
+    def delete_transaction_by_id(self, perfil: str, tx_id: int) -> dict:
+        """Como `delete_last_transaction`, pero borra puntualmente la
+        transacción `tx_id` (verificando que sea DE ESTE PERFIL) en vez de
+        "la que sea la última en ese momento". Se usa tras confirmar con
+        botones qué transacción específica se va a deshacer (ver
+        peek_last_transaction/_pedir_confirmacion_deshacer) -- así, si entre
+        el aviso y la confirmación se registró algo nuevo, no se borra por
+        error la transacción equivocada; simplemente ya no coincide y se
+        avisa que ya no está disponible."""
+        row = self._conn.execute(
+            """SELECT id, tipo, monto, moneda, cuenta, categoria, descripcion, fecha
+               FROM transactions WHERE id = ? AND perfil = ?""",
+            (tx_id, perfil)
         ).fetchone()
         if row is None:
             return None

@@ -16,7 +16,7 @@ from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
     presupuesto_command, racha_command, menu_command, menu_callback,
-    resumen_nav_callback, deshacer_callback, diezmo_command, diezmo_pagado_command,
+    resumen_nav_callback, deshacer_callback, deshacer_confirmacion_callback, diezmo_command, diezmo_pagado_command,
     bloquear_command, bloquear_callback, desbloquear_command, bloqueados_command,
     cuenta_nueva_command, deudas_command, meta_nueva_command, metas_command,
 )
@@ -244,6 +244,7 @@ def main():
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
+        application.add_handler(CallbackQueryHandler(deshacer_confirmacion_callback, pattern=r"^coco_deshacerconf:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))

@@ -75,6 +75,17 @@ def _deshacer_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _deshacer_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Botones para confirmar/cancelar qué transacción puntual se va a
+    deshacer -- ANTES de tocar la billetera. Ver _pedir_confirmacion_deshacer
+    en handlers de commands.py: evita que encadenar /deshacer a ciegas borre
+    movimientos viejos que el usuario ya ni recordaba, sin darse cuenta."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, deshacer", callback_data="coco_deshacerconf:si"),
+        InlineKeyboardButton("❌ No, dejarlo", callback_data="coco_deshacerconf:no"),
+    ]])
+
+
 def _resumen_nav_keyboard(prev_year: int, prev_month: int, next_year: int, next_month: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("◀ Mes anterior", callback_data=f"coco_resumen:{prev_year:04d}-{prev_month:02d}"),

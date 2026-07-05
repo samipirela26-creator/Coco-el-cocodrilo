@@ -15,7 +15,7 @@ from src.storage.db import DBClient
 from src.services import fx
 from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
-from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard
+from src.bot.replies import _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard, _deshacer_confirm_keyboard
 from src.bot.formatters import _format_rates_block, _rate_variation_pct, format_diezmo_pagado_message
 from src.bot.verses import pick_verse
 from src.bot.texts import _welcome_text, _help_text
@@ -439,58 +439,93 @@ def _formatear_deshecho(deshecho: dict) -> str:
     )
 
 
-async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Revierte el último gasto/ingreso registrado por este perfil (por si el
-    LLM entendió mal un monto o categoría). No deshace ajustes de saldo
-    directos ni transferencias entre billeteras propias -- solo gasto/ingreso."""
-    if not _is_allowed(update, context):
-        return
+def _formatear_pendiente_deshacer(pendiente: dict) -> str:
+    emoji = "💸" if pendiente['tipo'] == 'gasto' else "💵"
+    tipo_str = "gasto" if pendiente['tipo'] == 'gasto' else "ingreso"
+    simbolo = MONEDA_SIMBOLO.get(pendiente['moneda'], '')
+    return (
+        f"🐊 Lo último que tengo registrado suyo es este {tipo_str}:\n\n"
+        f"{emoji} {simbolo} {pendiente['monto']:.2f} {pendiente['moneda']} "
+        f"({pendiente['categoria']}, {pendiente['fecha']})\n\n"
+        f"¿Seguro que quiere deshacerlo?"
+    )
+
+
+async def _pedir_confirmacion_deshacer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Antes de borrar nada, muestra QUÉ transacción es "la última" y pide
+    confirmación con botones -- evita que encadenar /deshacer varias veces
+    seguidas (ej. esperando deshacer un /saldo_inicial, que no es
+    revertible por este comando) termine borrando a ciegas movimientos
+    viejos que el usuario ya ni recordaba, cambiando su saldo de forma
+    inesperada. Guarda el id puntual a borrar en `context.user_data` hasta
+    que llegue la respuesta (ver deshacer_confirmacion_callback)."""
     db: DBClient = context.bot_data['db']
     perfil = _perfil_de(update.effective_user.id, context)
+    pendiente = db.peek_last_transaction(perfil)
 
-    try:
-        deshecho = db.delete_last_transaction(perfil)
-    except StorageError as e:
-        await _reply(update, f"❌ Error al deshacer: {e}")
-        return
-
-    if deshecho is None:
+    if pendiente is None:
         await _reply(update, "No tengo ningún gasto o ingreso reciente suyo que deshacer.")
         return
 
-    await _reply(update, _formatear_deshecho(deshecho))
+    context.user_data['pending_deshacer'] = {'perfil': perfil, 'tx_id': pendiente['id']}
+    await _reply(update, _formatear_pendiente_deshacer(pendiente), reply_markup=_deshacer_confirm_keyboard())
+
+
+async def deshacer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/deshacer: en vez de borrar de inmediato "la última transacción", muestra
+    cuál es y pide confirmar con botones antes de tocar nada (ver
+    _pedir_confirmacion_deshacer). No deshace ajustes de saldo directos ni
+    transferencias entre billeteras propias -- solo gasto/ingreso."""
+    if not _is_allowed(update, context):
+        return
+    await _pedir_confirmacion_deshacer(update, context)
 
 
 async def deshacer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Botón "↩️ Deshacer" bajo cada confirmación de gasto/ingreso -- misma
-    lógica que /deshacer, pero disparada desde el botón. Siempre deshace el
-    ÚLTIMO movimiento del perfil (igual que el comando), no necesariamente
-    el que muestra el mensaje donde se apretó el botón, si ya se registró
-    algo más nuevo después."""
+    lógica que /deshacer: pide confirmar antes de borrar nada (ver
+    _pedir_confirmacion_deshacer), ya que "la última transacción" del perfil
+    no necesariamente es la que muestra el mensaje donde se apretó el botón,
+    si ya se registró algo más nuevo (o más viejo sin relación) después."""
     query = update.callback_query
     if not _is_allowed(update, context):
         await query.answer()
         return
-    db: DBClient = context.bot_data['db']
-    perfil = _perfil_de(update.effective_user.id, context)
+    await query.answer()
+    await _pedir_confirmacion_deshacer(update, context)
 
+
+async def deshacer_confirmacion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de _pedir_confirmacion_deshacer: solo AHORA se borra de verdad
+    la transacción puntual que se mostró (por id, no "la última" a ciegas --
+    ver DBClient.delete_transaction_by_id), para no arriesgarse a borrar otra
+    distinta si algo cambió entre el aviso y la confirmación."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_deshacer', None)
+    await query.answer()
+    if decision != "si" or not pending:
+        try:
+            await query.edit_message_text("🐊 Entendido, no deshice nada.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
     try:
-        deshecho = db.delete_last_transaction(perfil)
+        deshecho = db.delete_transaction_by_id(pending['perfil'], pending['tx_id'])
     except StorageError as e:
-        await query.answer(f"Error al deshacer: {e}", show_alert=True)
+        await query.edit_message_text(f"❌ Error al deshacer: {e}")
         return
 
     if deshecho is None:
-        await query.answer("No hay nada reciente que deshacer.", show_alert=True)
+        await query.edit_message_text("🐊 Esa transacción ya no está disponible (puede que ya la hubiera deshecho antes).")
         return
 
-    await query.answer("Deshecho.")
-    try:
-        texto_original = query.message.text or ""
-        await query.edit_message_text(f"{texto_original}\n\n↩️ Deshecho.")
-    except Exception:
-        # Si no se pudo editar (mensaje muy viejo, etc.), igual mandamos la confirmación aparte.
-        await _reply(update, _formatear_deshecho(deshecho))
+    await query.edit_message_text(_formatear_deshecho(deshecho))
 
 
 async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
