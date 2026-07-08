@@ -38,11 +38,24 @@ class TransactionsMixin:
             )
             self._ensure_category(categoria, perfil)
             delta = monto if tipo == 'ingreso' else -monto
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE wallets SET balance = balance + ?, updated_at = ? "
                 "WHERE perfil = ? AND moneda = ? AND cuenta = ?",
                 (delta, datetime.now().isoformat(), perfil, moneda, cuenta)
             )
+            if cursor.rowcount != 1:
+                # Nunca debe pasar (la billetera se garantiza arriba con
+                # _ensure_wallets_for_profile), pero si algún día no matchea
+                # ninguna fila, el UPDATE no falla ni avisa por sí solo --
+                # la transacción quedaría insertada con el saldo sin tocar,
+                # perdiendo dinero en silencio (bug real detectado en
+                # producción 2026-07-08: un ingreso de 6000 COP se guardó en
+                # `transactions` pero el saldo de la billetera nunca subió).
+                # Mejor abortar todo y que el usuario vea un error claro.
+                raise StorageError(
+                    f"No se pudo actualizar la billetera {moneda}/{cuenta} "
+                    f"del perfil {perfil} (rowcount={cursor.rowcount})"
+                )
             self._conn.commit()
             if tipo == 'ingreso':
                 # Diezmo: solo informativo, no toca ninguna billetera (ver
@@ -50,6 +63,9 @@ class TransactionsMixin:
                 self.add_tithe_from_income(perfil, moneda, monto)
             logger.info(f"Transacción registrada [{perfil}]: {tipo} {moneda}/{cuenta} {monto} - {categoria} - {fecha}")
             return cuenta
+        except StorageError:
+            self._conn.rollback()
+            raise
         except sqlite3.Error as e:
             self._conn.rollback()
             raise StorageError(f"Error al guardar transacción: {e}")
