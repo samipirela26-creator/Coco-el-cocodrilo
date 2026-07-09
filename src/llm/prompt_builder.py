@@ -86,7 +86,9 @@ Reglas:
 - "tipo" es "gasto" si el usuario pagó/compró/gastó algo, "ingreso" si recibió/cobró/le pagaron,
   o "ajuste_saldo" si el usuario está DECLARANDO cuánto tiene en total en una cuenta/bolsillo
   (no es un movimiento nuevo de dinero). Ejemplos de "ajuste_saldo": "tengo 50 dólares en efectivo",
-  "en Binance tengo 200", "me quedan 300 mil bolívares en el BDV", "en mi cuenta hay X".
+  "en Binance tengo 200", "me quedan 300 mil bolívares en el BDV", "en mi cuenta hay X",
+  "tengo 7000 pesos" (COP también cuenta -- "tengo X pesos" es SIEMPRE ajuste_saldo, igual que
+  con dólares o bolívares, nunca "gasto" ni "ingreso").
   NO uses "ajuste_saldo" si dice que gastó, compró, cobró o le pagaron: eso es "gasto" o "ingreso".
 - Si "tipo" es "gasto":
   * Si el gasto encaja claramente en una de estas categorías fijas, usa EXACTAMENTE una de ellas: "{categories_str}".
