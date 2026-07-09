@@ -17,7 +17,7 @@ from src.utils.exceptions import StorageError
 from src.bot.access import _is_allowed, _perfil_de
 from src.bot.replies import (
     _reply, _reply_photo, _menu_keyboard, _resumen_nav_keyboard, _deshacer_confirm_keyboard,
-    _borrar_todo_confirm_keyboard,
+    _borrar_todo_confirm_keyboard, _tasas_reply_keyboard,
 )
 from src.bot.formatters import _format_rates_block, _rate_variation_pct, format_diezmo_pagado_message
 from src.bot.verses import pick_verse
@@ -58,7 +58,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update, context):
         return
-    await _reply(update, _welcome_text())
+    await _reply(update, _welcome_text(), reply_markup=_tasas_reply_keyboard())
 
 
 async def _maybe_welcome_new_profile(update: Update, context: ContextTypes.DEFAULT_TYPE, perfil: str) -> None:
@@ -70,7 +70,7 @@ async def _maybe_welcome_new_profile(update: Update, context: ContextTypes.DEFAU
     dueño del bot (para que se entere de quién se está registrando solo)."""
     db: DBClient = context.bot_data['db']
     if db.is_new_profile(perfil):
-        await _reply(update, _welcome_text(nuevo_registro=True))
+        await _reply(update, _welcome_text(nuevo_registro=True), reply_markup=_tasas_reply_keyboard())
         await _notify_owner_new_profile(update, context, perfil)
 
 
@@ -112,7 +112,7 @@ async def cambio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     binance_var = _rate_variation_pct(binance, binance_prev)
     eur_bcv_var = _rate_variation_pct(eur_bcv, eur_bcv_prev)
     mensaje = _format_rates_block(bcv, binance, bcv_var, binance_var, eur_bcv, eur_bcv_var)
-    await _reply(update, f"💱 Tasas actuales\n\n{mensaje}")
+    await _reply(update, f"💱 Tasas actuales\n\n{mensaje}", reply_markup=_tasas_reply_keyboard())
 
 
 async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

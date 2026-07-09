@@ -16,6 +16,7 @@ from src.storage.db import DBClient
 from src.reports.weekly_image import render_weekly_report
 from src.services import fx
 from src.bot.formatters import _format_rates_block, _rate_variation_pct
+from src.bot.replies import _tasas_reply_keyboard
 from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
@@ -163,7 +164,7 @@ async def send_morning_rates(context) -> None:
     for user_ids in profile_to_user_ids.values():
         for user_id in user_ids:
             try:
-                await context.bot.send_message(chat_id=user_id, text=mensaje)
+                await context.bot.send_message(chat_id=user_id, text=mensaje, reply_markup=_tasas_reply_keyboard())
             except Exception as e:
                 logger.error(f"No se pudo enviar las tasas matutinas a {user_id}: {e}")
 

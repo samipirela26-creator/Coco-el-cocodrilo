@@ -29,7 +29,7 @@ from src.bot.replies import (
 )
 from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI, INCOME_SOURCES
 from src.storage.constants import resolve_cuenta, CUENTAS_POR_MONEDA
-from src.bot.commands import menu_command, _maybe_welcome_new_profile
+from src.bot.commands import menu_command, cambio_command, _maybe_welcome_new_profile
 
 logger = logging.getLogger('gastos-bot')
 
@@ -566,6 +566,13 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     """
     if user_message.strip().lower() in ("menu", "menú", "m"):
         await menu_command(update, context)
+        return
+
+    # Atajo del botón fijo "💱 Tasas" (teclado de respuesta persistente, ver
+    # _tasas_reply_keyboard) -- sin esto, el texto del botón caería en el LLM
+    # como si fuera un gasto/ingreso cualquiera.
+    if user_message.strip().lower() in ("tasas", "💱 tasas"):
+        await cambio_command(update, context)
         return
 
     if not _check_cooldown(update, context):

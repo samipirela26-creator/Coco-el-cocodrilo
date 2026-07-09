@@ -1,8 +1,9 @@
 """Helpers de UI compartidos: responder tanto a mensajes normales como a
 botones del /menu, y construir los teclados inline del bot (menú, deshacer,
-navegación de mes, selector de categoría)."""
+navegación de mes, selector de categoría) y el teclado de respuesta
+persistente (botón de tasas)."""
 import io
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 
 
 async def _reply(update: Update, text: str, **kwargs) -> None:
@@ -142,6 +143,23 @@ def _deshacer_transferencia_confirm_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton("✅ Sí, deshacer", callback_data="coco_deshacertransfconf:si"),
         InlineKeyboardButton("❌ No, dejarlo", callback_data="coco_deshacertransfconf:no"),
     ]])
+
+
+def _tasas_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Teclado de RESPUESTA (no inline): a diferencia de los teclados de
+    arriba, que aparecen pegados a un mensaje puntual y se pueden quedar
+    "viejos" cuando se manda un mensaje nuevo, este vive fijo abajo del
+    cuadro de texto (como el menú de emojis) hasta que se reemplace o se
+    quite a propósito -- ver ReplyKeyboardRemove si algún día hace falta
+    ocultarlo. Se reenvía en varios puntos (bienvenida, /cambio, tasas
+    matutinas) para garantizar que aparezca tarde o temprano, incluso para
+    quien ya usaba el bot antes de este botón existir (pedido explícito del
+    usuario, 2026-07-09)."""
+    return ReplyKeyboardMarkup(
+        [["💱 Tasas"]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def _efectivo_keyboard(opciones: list) -> InlineKeyboardMarkup:
