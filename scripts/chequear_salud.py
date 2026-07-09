@@ -78,14 +78,38 @@ def main() -> None:
     if not os.path.isabs(db_path):
         db_path = os.path.join(base_dir, db_path)
 
-    chat_ids = [
-        int(uid.strip())
-        for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
-        if uid.strip()
-    ]
+    # A quién avisar: el dueño (OWNER_USER_ID) si está configurado; si no,
+    # ALLOWED_USER_IDS (lista de acceso restringido); si tampoco, se cae a
+    # todos los IDs listados en USER_PROFILES (así funciona incluso en modo
+    # de registro abierto, donde ALLOWED_USER_IDS suele quedar vacío a propósito).
+    chat_ids = []
+    owner_id_str = os.getenv("OWNER_USER_ID", "").strip()
+    if owner_id_str:
+        chat_ids = [int(owner_id_str)]
+    if not chat_ids:
+        chat_ids = [
+            int(uid.strip())
+            for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
+            if uid.strip()
+        ]
+    if not chat_ids:
+        vistos = set()
+        for grupo in os.getenv("USER_PROFILES", "").split(","):
+            grupo = grupo.strip()
+            if not grupo or ":" not in grupo:
+                continue
+            _, ids_str = grupo.split(":", 1)
+            for uid in ids_str.split("|"):
+                uid = uid.strip()
+                if uid.isdigit() and int(uid) not in vistos:
+                    vistos.add(int(uid))
+                    chat_ids.append(int(uid))
 
     if not token or not chat_ids:
-        log.error("Falta TELEGRAM_BOT_TOKEN o ALLOWED_USER_IDS; no puedo avisar.")
+        log.error(
+            "Falta TELEGRAM_BOT_TOKEN o no hay a quién avisar "
+            "(configura OWNER_USER_ID, ALLOWED_USER_IDS o USER_PROFILES); no puedo avisar."
+        )
         return
 
     if not os.path.exists(db_path):
