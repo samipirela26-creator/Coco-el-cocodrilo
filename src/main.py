@@ -2,9 +2,11 @@
 import datetime as dt
 import io
 import logging
+import os
 import random
 import signal
 import sys
+import time
 from telegram import Update, BotCommand, BotCommandScopeChat
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from src.config import Config
@@ -73,6 +75,40 @@ async def run_daily_backup(context) -> None:
         db.respaldo_diario()
     except Exception as e:
         logger.exception(f"Error al hacer el backup diario de la base de datos: {e}")
+
+
+async def heartbeat_job(context) -> None:
+    """Job cada 60s: escribe el "latido" de vida en la base de datos y
+    detecta si el Updater interno de python-telegram-bot murió en silencio.
+
+    Caso real que motivó esto (2026-07-09): un NetworkError durante
+    get_updates dejó el proceso "activo" para systemd (el resto del event
+    loop -- JobQueue incluido -- seguía corriendo bien) pero la tarea de
+    polling murió sin que nada más se enterara, así que el bot quedó sordo
+    a mensajes nuevos por más de 30 minutos hasta que alguien lo notó a mano
+    y reinició el servicio.
+
+    Por eso este job hace dos cosas:
+    1. Si `updater.running` es False, el polling está muerto de verdad --
+       nos autodestruimos (`os._exit`) para que systemd (Restart=always)
+       levante un proceso nuevo en segundos, en vez de esperar a que alguien
+       se dé cuenta.
+    2. Si sigue vivo, refresca el latido en `bot_state`. Un chequeo externo
+       (scripts/chequear_salud.py, disparado por un timer de systemd fuera
+       de este proceso) lee ese latido para avisar por Telegram si lleva
+       demasiado tiempo sin refrescarse -- cubre el caso más grave en que
+       hasta el event loop completo se cuelga y este mismo job deja de
+       correr."""
+    db: DBClient = context.bot_data['db']
+    updater = context.application.updater
+    if updater is not None and not updater.running:
+        logger.critical(
+            "El Updater de python-telegram-bot dejó de escuchar mensajes "
+            "(polling muerto). Reiniciando el proceso para que systemd lo "
+            "levante de nuevo..."
+        )
+        os._exit(1)
+    db.estado_set('latido', str(time.time()))
 
 
 async def send_nightly_reminder(context) -> None:
@@ -267,6 +303,14 @@ def main():
         # convención que datetime.date.weekday() -> 0=lunes ... 6=domingo.
         # Por lo tanto days=(6,) corresponde a domingo.
         if application.job_queue is not None:
+            application.job_queue.run_repeating(
+                heartbeat_job,
+                interval=60,
+                first=10,
+                name="latido_salud",
+            )
+            logger.info("Job de latido de salud (cada 60s) programado.")
+
             application.job_queue.run_daily(
                 send_weekly_report,
                 time=dt.time(hour=8, minute=0),

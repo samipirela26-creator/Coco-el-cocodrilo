@@ -197,6 +197,20 @@ class SchemaMixin:
             )
         """)
 
+        # Estado interno del bot (clave/valor genérico) -- de momento solo se
+        # usa para el "latido" de vida (timestamp que se refresca en cada
+        # ciclo del job de heartbeat, ver main.py:heartbeat_job y
+        # HealthMixin en health.py). Un chequeo externo (scripts/chequear_salud.py
+        # + timer de systemd) compara ese latido contra un umbral para avisar
+        # por Telegram si el bot se cuelga -- mismo patrón que agenda-bot
+        # (Larry), que usa una tabla equivalente.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+
         # wallets: la clave primaria cambia (ahora incluye perfil), así que si
         # la tabla existe con el esquema viejo (sin perfil) hay que migrarla
         # copiando los datos al perfil legacy en vez de solo agregar la columna.
