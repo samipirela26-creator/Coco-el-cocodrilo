@@ -107,9 +107,12 @@ async def cambio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     db: DBClient = context.bot_data['db']
     bcv, bcv_prev = fx.get_bcv_rate_with_variation(db)
     binance, binance_prev = fx.get_binance_rate_with_variation(db)
+    eur_bcv, eur_bcv_prev = fx.get_eur_bcv_rate_with_variation(db)
     bcv_var = _rate_variation_pct(bcv, bcv_prev)
     binance_var = _rate_variation_pct(binance, binance_prev)
-    await _reply(update, f"💱 Tasas actuales\n\n{_format_rates_block(bcv, binance, bcv_var, binance_var)}")
+    eur_bcv_var = _rate_variation_pct(eur_bcv, eur_bcv_prev)
+    mensaje = _format_rates_block(bcv, binance, bcv_var, binance_var, eur_bcv, eur_bcv_var)
+    await _reply(update, f"💱 Tasas actuales\n\n{mensaje}")
 
 
 async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

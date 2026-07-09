@@ -14,6 +14,8 @@ from src.utils.logger import setup_logger
 from src.llm.gemini_client import GeminiClient
 from src.storage.db import DBClient
 from src.reports.weekly_image import render_weekly_report
+from src.services import fx
+from src.bot.formatters import _format_rates_block, _rate_variation_pct
 from src.bot.commands import (
     start_command, help_command, saldo_command, saldo_inicial_command,
     resumen_command, cambio_command, exportar_command, deshacer_command,
@@ -134,6 +136,36 @@ async def send_nightly_reminder(context) -> None:
                 await context.bot.send_message(chat_id=user_id, text=mensaje)
             except Exception as e:
                 logger.error(f"No se pudo enviar el recordatorio nocturno a {user_id} ({perfil}): {e}")
+
+
+async def send_morning_rates(context) -> None:
+    """Job diario 7:00 AM: manda dólar BCV, Binance y euro BCV a TODAS las
+    cuentas de Telegram de cada perfil registrado -- pedido explícito del
+    usuario (2026-07-09). Las tasas no son datos por perfil (son las mismas
+    para todos), así que se calculan UNA sola vez y se reusa el mismo mensaje
+    para todo el mundo (a diferencia de send_weekly_report, que sí arma un
+    resumen distinto por perfil)."""
+    db: DBClient = context.bot_data['db']
+    config_mapping = context.bot_data.get('profile_to_user_ids') or {}
+    profile_to_user_ids = _perfiles_con_user_ids(config_mapping, db)
+    if not profile_to_user_ids:
+        return
+
+    bcv, bcv_prev = fx.get_bcv_rate_with_variation(db)
+    binance, binance_prev = fx.get_binance_rate_with_variation(db)
+    eur_bcv, eur_bcv_prev = fx.get_eur_bcv_rate_with_variation(db)
+    bcv_var = _rate_variation_pct(bcv, bcv_prev)
+    binance_var = _rate_variation_pct(binance, binance_prev)
+    eur_bcv_var = _rate_variation_pct(eur_bcv, eur_bcv_prev)
+    mensaje = f"☀️ Buenos días. Así amanecieron las tasas:\n\n" \
+        f"{_format_rates_block(bcv, binance, bcv_var, binance_var, eur_bcv, eur_bcv_var)}"
+
+    for user_ids in profile_to_user_ids.values():
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=mensaje)
+            except Exception as e:
+                logger.error(f"No se pudo enviar las tasas matutinas a {user_id}: {e}")
 
 
 async def send_weekly_report(context) -> None:
@@ -314,6 +346,14 @@ def main():
                 name="latido_salud",
             )
             logger.info("Job de latido de salud (cada 60s) programado.")
+
+            application.job_queue.run_daily(
+                send_morning_rates,
+                time=dt.time(hour=7, minute=0),
+                days=(0, 1, 2, 3, 4, 5, 6),
+                name="tasas_matutinas",
+            )
+            logger.info("Job de tasas matutinas (7:00 AM) programado.")
 
             application.job_queue.run_daily(
                 send_weekly_report,

@@ -24,10 +24,15 @@ def _variation_note(pct: float) -> str:
     return f" ({flecha} {abs(pct):.1f}% desde la última consulta)"
 
 
-def _format_rates_block(bcv: float, binance: float, bcv_var: float = None, binance_var: float = None) -> str:
+def _format_rates_block(bcv: float, binance: float, bcv_var: float = None, binance_var: float = None,
+                         eur_bcv: float = None, eur_bcv_var: float = None) -> str:
+    """`eur_bcv` es opcional (None = no se muestra esa línea) para no romper
+    a otros llamadores que todavía no tengan esa tasa a mano."""
+    eur_line = f"\n💶 Euro BCV: {eur_bcv:,.2f} Bs/EUR{_variation_note(eur_bcv_var)}" if eur_bcv is not None else ""
     return (
         f"🏦 BCV: {bcv:,.2f} Bs/USD{_variation_note(bcv_var)}\n"
-        f"💵 Binance: {binance:,.2f} Bs/USD{_variation_note(binance_var)}\n"
+        f"💵 Binance: {binance:,.2f} Bs/USD{_variation_note(binance_var)}"
+        f"{eur_line}\n"
         f"🌎 USD -> COP: {fx.COP_PER_USD:,.0f} (tasa fija)"
     )
 
