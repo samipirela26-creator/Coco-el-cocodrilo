@@ -120,3 +120,44 @@ def _category_keyboard(categories: list) -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("✖️ Cancelar", callback_data="coco_cat:__cancel__")])
     return InlineKeyboardMarkup(rows)
+
+
+def _deshacer_transferencia_keyboard() -> InlineKeyboardMarkup:
+    """Botón bajo cada confirmación de transferencia/cambio de divisa (ver
+    _save_and_confirm, rama 'transferencia') para pedir que se revierta. NO
+    deshace nada todavía -- solo dispara la explicación de qué se va a
+    revertir (ver deshacer_transferencia_callback), igual que /deshacer pide
+    confirmación antes de tocar la billetera."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩️ Deshacer cambio", callback_data="coco_deshacertransf:pedir")],
+    ])
+
+
+def _deshacer_transferencia_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Botones para confirmar/cancelar la reversión de una transferencia ya
+    explicada (ambas billeteras, antes/después) -- ver
+    deshacer_transferencia_callback y deshacer_transferencia_confirmacion_callback
+    en handlers.py."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Sí, deshacer", callback_data="coco_deshacertransfconf:si"),
+        InlineKeyboardButton("❌ No, dejarlo", callback_data="coco_deshacertransfconf:no"),
+    ]])
+
+
+def _efectivo_keyboard(opciones: list) -> InlineKeyboardMarkup:
+    """Botones de categoría (gasto) u origen (ingreso) que SIEMPRE se
+    muestran antes de guardar un movimiento en efectivo (USD/COP) -- ver
+    handlers._pedir_categoria_efectivo. Prefijo `coco_efectivo:` propio
+    (distinto de `coco_cat:`) para no mezclarse con el selector viejo, que
+    sigue existiendo para Bs/Binance cuando el LLM no adivinó categoría."""
+    rows = []
+    row = []
+    for op in opciones:
+        row.append(InlineKeyboardButton(op, callback_data=f"coco_efectivo:{op}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✖️ Cancelar", callback_data="coco_efectivo:__cancel__")])
+    return InlineKeyboardMarkup(rows)

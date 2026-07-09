@@ -97,3 +97,64 @@ def test_resolve_cuenta_perfil_sin_match_cae_al_default_fijo(db):
     # igual que el comportamiento clásico de resolve_cuenta().
     cuenta_resuelta = db.resolve_cuenta_perfil("juan", "Bs", "Provincial")
     assert cuenta_resuelta == "BDV"
+
+
+def test_peek_last_transfer_sin_transferencias_retorna_none(db):
+    # Un ajuste de saldo (set_wallet_balance) escribe UN solo snapshot, no dos
+    # con el mismo timestamp -- no debe confundirse con una transferencia.
+    db.set_wallet_balance("juan", "USD", "Efectivo", 100.0)
+    assert db.peek_last_transfer("juan") is None
+
+
+def test_peek_last_transfer_identifica_la_ultima_transferencia(db):
+    db.set_wallet_balance("juan", "USD", "Efectivo", 100.0)
+    db.transfer(
+        perfil="juan",
+        moneda_origen="USD", cuenta_origen="Efectivo", monto_origen=40.0,
+        moneda_destino="USD", cuenta_destino="Binance", monto_destino=40.0,
+    )
+    pendiente = db.peek_last_transfer("juan")
+    assert pendiente is not None
+    assert pendiente["moneda_origen"] == "USD" and pendiente["cuenta_origen"] == "Efectivo"
+    assert pendiente["anterior_origen"] == 100.0 and pendiente["nuevo_origen"] == 60.0
+    assert pendiente["moneda_destino"] == "USD" and pendiente["cuenta_destino"] == "Binance"
+    assert pendiente["anterior_destino"] == 0.0 and pendiente["nuevo_destino"] == 40.0
+    # Mismas claves que el resultado de transfer() -- reusable por los mismos formatters.
+    assert set(pendiente) >= {"anterior_origen", "nuevo_origen", "anterior_destino", "nuevo_destino"}
+
+
+def test_peek_last_transfer_no_confunde_con_gasto_posterior(db):
+    # Si después de la transferencia hay un gasto/ingreso normal (que no
+    # escribe balance_snapshots), la transferencia debe seguir siendo "la
+    # última" detectable -- pero si hay OTRO ajuste de saldo suelto después,
+    # ya no debe emparejarse con la transferencia vieja.
+    db.set_wallet_balance("juan", "USD", "Efectivo", 100.0)
+    db.transfer(
+        perfil="juan",
+        moneda_origen="USD", cuenta_origen="Efectivo", monto_origen=40.0,
+        moneda_destino="USD", cuenta_destino="Binance", monto_destino=40.0,
+    )
+    db.set_wallet_balance("juan", "Bs", "BDV", 500.0)  # snapshot suelto, no pareja
+    assert db.peek_last_transfer("juan") is None
+
+
+def test_undo_transfer_by_ids_revierte_ambas_billeteras(db):
+    db.set_wallet_balance("juan", "USD", "Efectivo", 100.0)
+    db.transfer(
+        perfil="juan",
+        moneda_origen="USD", cuenta_origen="Efectivo", monto_origen=40.0,
+        moneda_destino="USD", cuenta_destino="Binance", monto_destino=40.0,
+    )
+    pendiente = db.peek_last_transfer("juan")
+    resultado = db.undo_transfer_by_ids(
+        "juan", pendiente["snapshot_id_origen"], pendiente["snapshot_id_destino"]
+    )
+    assert resultado is not None
+    assert db.get_wallet_balance("juan", "USD", "Efectivo") == 100.0
+    assert db.get_wallet_balance("juan", "USD", "Binance") == 0.0
+    # Los snapshots ya se borraron -- no debe quedar nada que deshacer de nuevo.
+    assert db.peek_last_transfer("juan") is None
+
+
+def test_undo_transfer_by_ids_con_ids_invalidos_retorna_none(db):
+    assert db.undo_transfer_by_ids("juan", 9999, 9998) is None

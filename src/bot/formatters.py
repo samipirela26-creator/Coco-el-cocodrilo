@@ -204,3 +204,45 @@ Ahora: {simbolo_o} {resultado['nuevo_origen']:,.2f}
 {emoji_d} {resultado['cuenta_destino']} ({resultado['moneda_destino']})
 Antes: {simbolo_d} {resultado['anterior_destino']:,.2f}
 Ahora: {simbolo_d} {resultado['nuevo_destino']:,.2f}{tasa_line}""" + _coco_line(respuesta)
+
+
+def format_deshacer_transferencia_preview_message(pendiente: dict) -> str:
+    """Vista previa de QUÉ transferencia/cambio de divisa se va a deshacer,
+    mostrando el impacto en AMBAS billeteras (estado actual -> estado si se
+    revierte) ANTES de tocar nada -- ver DBClient.peek_last_transfer y
+    deshacer_transferencia_callback en handlers.py. Mismas claves que
+    format_transferencia_message (resultado de transfer()/peek_last_transfer)."""
+    simbolo_o = MONEDA_SIMBOLO.get(pendiente['moneda_origen'], '')
+    simbolo_d = MONEDA_SIMBOLO.get(pendiente['moneda_destino'], '')
+    emoji_o = CUENTA_EMOJI.get(pendiente['cuenta_origen'], '👛')
+    emoji_d = CUENTA_EMOJI.get(pendiente['cuenta_destino'], '👛')
+    return f"""🐊 Esto es lo último que tengo registrado como cambio de divisa:
+
+{emoji_o} {pendiente['cuenta_origen']} ({pendiente['moneda_origen']})
+Ahora: {simbolo_o} {pendiente['nuevo_origen']:,.2f}
+Si deshago: {simbolo_o} {pendiente['anterior_origen']:,.2f}
+
+{emoji_d} {pendiente['cuenta_destino']} ({pendiente['moneda_destino']})
+Ahora: {simbolo_d} {pendiente['nuevo_destino']:,.2f}
+Si deshago: {simbolo_d} {pendiente['anterior_destino']:,.2f}
+
+¿Confirma que quiere deshacer este cambio?"""
+
+
+def format_transferencia_deshecha_message(resultado: dict) -> str:
+    """Confirmación final después de revertir un cambio de divisa (ver
+    DBClient.undo_transfer_by_ids) -- ambas billeteras quedan en su valor
+    'anterior' original."""
+    simbolo_o = MONEDA_SIMBOLO.get(resultado['moneda_origen'], '')
+    simbolo_d = MONEDA_SIMBOLO.get(resultado['moneda_destino'], '')
+    emoji_o = CUENTA_EMOJI.get(resultado['cuenta_origen'], '👛')
+    emoji_d = CUENTA_EMOJI.get(resultado['cuenta_destino'], '👛')
+    return f"""🐊 Listo, cambio deshecho.
+
+{emoji_o} {resultado['cuenta_origen']} ({resultado['moneda_origen']})
+Antes: {simbolo_o} {resultado['nuevo_origen']:,.2f}
+Ahora: {simbolo_o} {resultado['anterior_origen']:,.2f}
+
+{emoji_d} {resultado['cuenta_destino']} ({resultado['moneda_destino']})
+Antes: {simbolo_d} {resultado['nuevo_destino']:,.2f}
+Ahora: {simbolo_d} {resultado['anterior_destino']:,.2f}"""

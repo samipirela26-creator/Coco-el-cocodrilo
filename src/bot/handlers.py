@@ -20,12 +20,14 @@ from src.bot.formatters import (
     format_transferencia_message, format_diezmo_pagado_message,
     format_deuda_nueva_message, format_deuda_pago_message,
     format_meta_nueva_message, format_meta_aporte_message,
+    format_deshacer_transferencia_preview_message, format_transferencia_deshecha_message,
 )
 from src.bot.replies import (
     _reply, _deshacer_keyboard, _category_keyboard, _saldo_confirm_keyboard,
-    _cuenta_nueva_confirm_keyboard, _tipo_transferencia_keyboard,
+    _cuenta_nueva_confirm_keyboard, _tipo_transferencia_keyboard, _efectivo_keyboard,
+    _deshacer_transferencia_keyboard, _deshacer_transferencia_confirm_keyboard,
 )
-from src.bot.constants import MONEDA_SIMBOLO
+from src.bot.constants import MONEDA_SIMBOLO, CUENTA_EMOJI, INCOME_SOURCES
 from src.storage.constants import resolve_cuenta, CUENTAS_POR_MONEDA
 from src.bot.commands import menu_command, _maybe_welcome_new_profile
 
@@ -232,8 +234,27 @@ async def _save_and_confirm(data: dict, user_id: int, perfil: str, db: DBClient,
             fuente=fuente,
         )
         mensaje = format_transferencia_message(resultado, data.get('respuesta'), data.get('tasa_cambio'))
-        await _reply(update, f"{prefix}{mensaje}")
+        # Botón para revertir el cambio (ver deshacer_transferencia_callback) --
+        # a diferencia de _deshacer_keyboard (gasto/ingreso), este pide
+        # confirmación explicando el impacto en AMBAS billeteras antes de
+        # tocar nada, por pedido explícito del usuario (2026-07-09).
+        await _reply(update, f"{prefix}{mensaje}", reply_markup=_deshacer_transferencia_keyboard())
         return
+
+    # Efectivo (USD/COP, cuenta "Efectivo") es plata física que se pierde de
+    # vista fácil si Coco solo adivina la categoría/origen -- a diferencia de
+    # Bs/Binance, que casi siempre vienen de una captura o de un texto ya
+    # detallado. Por pedido explícito del usuario (2026-07-09), TODO gasto o
+    # ingreso en efectivo se confirma con botones (categoría/origen) ANTES
+    # de tocar la billetera, mostrando de una vez el "antes -> después" --
+    # ver _pedir_categoria_efectivo. `_efectivo_confirmado` evita volver a
+    # entrar acá cuando esta misma función se reinvoca después de elegir el
+    # botón (ver efectivo_categoria_callback).
+    if not data.get('_efectivo_confirmado'):
+        cuenta_preview = db.resolve_cuenta_perfil(perfil, moneda, data.get('cuenta'))
+        if cuenta_preview == 'Efectivo':
+            await _pedir_categoria_efectivo(context, update, db, perfil, moneda, cuenta_preview, data, prefix)
+            return
 
     cuenta_resuelta = db.append_expense(
         perfil=perfil,
@@ -318,6 +339,80 @@ async def tipo_transferencia_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text(f"❌ Error al guardar en la base de datos.\n🔧 {e}")
 
 
+async def deshacer_transferencia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón "↩️ Deshacer cambio" bajo cada confirmación de transferencia
+    (ver _save_and_confirm, rama 'transferencia'): NO revierte nada todavía
+    -- primero busca la última transferencia DE ESTE PERFIL (ver
+    db.peek_last_transfer) y explica exactamente qué se va a deshacer en
+    ambas billeteras, pidiendo confirmación (ver
+    deshacer_transferencia_confirmacion_callback). Por pedido explícito del
+    usuario (2026-07-09): "pide deshacer y explica lo que deshará"."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    await query.answer()
+    db: DBClient = context.bot_data['db']
+    perfil = _perfil_de(update.effective_user.id, context)
+    pendiente = db.peek_last_transfer(perfil)
+
+    if pendiente is None:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await _reply(update, "🐊 No tengo ningún cambio de divisa reciente suyo que deshacer.")
+        return
+
+    context.user_data['pending_deshacer_transferencia'] = {
+        'perfil': perfil,
+        'snapshot_id_origen': pendiente['snapshot_id_origen'],
+        'snapshot_id_destino': pendiente['snapshot_id_destino'],
+    }
+    await _reply(
+        update, format_deshacer_transferencia_preview_message(pendiente),
+        reply_markup=_deshacer_transferencia_confirm_keyboard(),
+    )
+
+
+async def deshacer_transferencia_confirmacion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de deshacer_transferencia_callback: solo AHORA se revierte de
+    verdad (por los ids puntuales de los dos snapshots que se mostraron, no
+    "la última en este momento" a ciegas -- ver db.undo_transfer_by_ids), para
+    no arriesgarse a revertir otra distinta si algo cambió entre el aviso y
+    la confirmación."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    decision = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_deshacer_transferencia', None)
+    await query.answer()
+    if decision != "si" or not pending:
+        try:
+            await query.edit_message_text("🐊 Entendido, no deshice nada.")
+        except Exception:
+            pass
+        return
+
+    db: DBClient = context.bot_data['db']
+    try:
+        resultado = db.undo_transfer_by_ids(
+            pending['perfil'], pending['snapshot_id_origen'], pending['snapshot_id_destino']
+        )
+    except StorageError as e:
+        await query.edit_message_text(f"❌ Error al deshacer: {e}")
+        return
+
+    if resultado is None:
+        await query.edit_message_text(
+            "🐊 Ese cambio ya no está disponible (puede que ya lo hubiera deshecho antes)."
+        )
+        return
+
+    await query.edit_message_text(format_transferencia_deshecha_message(resultado))
+
+
 async def _offer_category_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, expense_data: dict) -> None:
     """Cuando el LLM entendió un gasto pero no supo en qué categoría ponerlo
     (validate_expense_data lo rechaza por categoría vacía), en vez de fallar
@@ -360,6 +455,84 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     await query.answer(f"Categoría: {categoria}")
     pending['categoria'] = categoria
+    db: DBClient = context.bot_data['db']
+    user_id = update.effective_user.id
+    perfil = _perfil_de(user_id, context)
+    try:
+        await _save_and_confirm(pending, user_id, perfil, db, update, context, fuente='texto')
+    except StorageError as e:
+        await _reply(update, f"❌ Error al guardar en la base de datos.\n🔧 {e}")
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
+async def _pedir_categoria_efectivo(context: ContextTypes.DEFAULT_TYPE, update: Update, db: DBClient,
+                                     perfil: str, moneda: str, cuenta: str, data: dict,
+                                     prefix: str = "") -> None:
+    """Para TODO gasto/ingreso en efectivo (USD o COP, cuenta "Efectivo") se
+    pide SIEMPRE con botones en qué se gastó (categoría) o de dónde vino
+    (origen), antes de tocar la billetera -- ver el `if` en _save_and_confirm
+    que llama a esta función. Muestra de una vez el "antes -> después" de esa
+    billetera (la "calculadora" que pidió el usuario) para que confirme
+    visualmente el impacto antes de elegir. Guarda los datos ya parseados en
+    `context.user_data['pending_efectivo']` hasta que llegue la respuesta --
+    ver efectivo_categoria_callback."""
+    tipo = data['tipo']
+    monto = float(data['monto'])
+    anterior = db.get_wallet_balance(perfil, moneda, cuenta)
+    proyectado = anterior + monto if tipo == 'ingreso' else anterior - monto
+    simbolo = MONEDA_SIMBOLO.get(moneda, '')
+    cuenta_emoji = CUENTA_EMOJI.get(cuenta, '👛')
+
+    pending = dict(data)
+    pending['moneda'] = moneda
+    pending['cuenta'] = cuenta
+    context.user_data['pending_efectivo'] = pending
+
+    if tipo == 'gasto':
+        opciones = context.bot_data.get('categories', [])
+        pregunta = "¿En qué lo gastó?"
+    else:
+        opciones = INCOME_SOURCES
+        pregunta = "¿De dónde vino ese ingreso?"
+
+    mensaje = (
+        f"{prefix}🐊 {'Gasto' if tipo == 'gasto' else 'Ingreso'} de {simbolo} {monto:,.2f} {moneda} en efectivo.\n\n"
+        f"{cuenta_emoji} {cuenta} ({moneda}): {simbolo} {anterior:,.2f} → {simbolo} {proyectado:,.2f}\n\n"
+        f"{pregunta}"
+    )
+    await _reply(update, mensaje, reply_markup=_efectivo_keyboard(opciones))
+
+
+async def efectivo_categoria_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botón de categoría/origen del selector de efectivo (ver
+    _pedir_categoria_efectivo): completa el movimiento pendiente y recién
+    ahora lo guarda de verdad (toca la billetera)."""
+    query = update.callback_query
+    if not _is_allowed(update, context):
+        await query.answer()
+        return
+    valor = (query.data or "").split(":", 1)[-1]
+    pending = context.user_data.pop('pending_efectivo', None)
+    if valor == "__cancel__" or not pending:
+        await query.answer()
+        try:
+            await query.edit_message_text("🐊 Descartado. Cuénteme de nuevo cuando guste.")
+        except Exception:
+            pass
+        return
+
+    await query.answer(valor)
+    pending['categoria'] = valor
+    if not pending.get('descripcion'):
+        # Para ingreso, "categoria" guarda el origen elegido -- si el LLM no
+        # había puesto una descripción propia, se usa el mismo origen (se ve
+        # reflejado igual en la confirmación final, ver format_confirmation_message).
+        pending['descripcion'] = valor
+    pending['_efectivo_confirmado'] = True
+
     db: DBClient = context.bot_data['db']
     user_id = update.effective_user.id
     perfil = _perfil_de(user_id, context)

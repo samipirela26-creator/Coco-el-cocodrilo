@@ -25,7 +25,8 @@ from src.bot.commands import (
 )
 from src.bot.handlers import (
     handle_message, handle_photo, handle_voice, error_handler, category_callback, saldo_callback,
-    cuenta_nueva_callback, tipo_transferencia_callback,
+    cuenta_nueva_callback, tipo_transferencia_callback, efectivo_categoria_callback,
+    deshacer_transferencia_callback, deshacer_transferencia_confirmacion_callback,
 )
 
 logger = None
@@ -286,10 +287,13 @@ def main():
         application.add_handler(CallbackQueryHandler(deshacer_confirmacion_callback, pattern=r"^coco_deshacerconf:"))
         application.add_handler(CallbackQueryHandler(borrar_todo_confirmacion_callback, pattern=r"^coco_borrartodo:"))
         application.add_handler(CallbackQueryHandler(category_callback, pattern=r"^coco_cat:"))
+        application.add_handler(CallbackQueryHandler(efectivo_categoria_callback, pattern=r"^coco_efectivo:"))
         application.add_handler(CallbackQueryHandler(bloquear_callback, pattern=r"^coco_bloquear:"))
         application.add_handler(CallbackQueryHandler(saldo_callback, pattern=r"^coco_saldo:"))
         application.add_handler(CallbackQueryHandler(cuenta_nueva_callback, pattern=r"^coco_cuentanueva:"))
         application.add_handler(CallbackQueryHandler(tipo_transferencia_callback, pattern=r"^coco_tipotransf:"))
+        application.add_handler(CallbackQueryHandler(deshacer_transferencia_callback, pattern=r"^coco_deshacertransf:"))
+        application.add_handler(CallbackQueryHandler(deshacer_transferencia_confirmacion_callback, pattern=r"^coco_deshacertransfconf:"))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )
