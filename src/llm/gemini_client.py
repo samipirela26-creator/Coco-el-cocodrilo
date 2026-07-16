@@ -166,7 +166,8 @@ class GeminiClient(LLMConnector):
         return self._extract_json_from_text(response_text)
 
     def analyze_image(self, image_bytes: bytes, categories: list,
-                       dynamic_categories: list = None, mime_type: str = "image/jpeg") -> dict:
+                       dynamic_categories: list = None, mime_type: str = "image/jpeg",
+                       caption: str = None) -> dict:
         """
         Analiza una captura de pantalla (transferencia o saldo bancario) usando
         Gemini Vision, probando los modelos de MODELOS en orden si alguno se satura.
@@ -184,7 +185,7 @@ class GeminiClient(LLMConnector):
         Raises:
             GeminiConnectionError, GeminiInvalidJSONError
         """
-        prompt = build_image_prompt(categories, dynamic_categories)
+        prompt = build_image_prompt(categories, dynamic_categories, caption=caption)
         cuerpo = {
             "contents": [{
                 "role": "user",

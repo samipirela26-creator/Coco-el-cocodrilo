@@ -2,6 +2,7 @@
 de saldo/transferencia) y notas de voz. Comparten el guardado/confirmación
 vía `_save_and_confirm`.
 """
+import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -564,6 +565,28 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
     """
     Flujo: 1) construir prompt 2) llamar a Gemini 3) validar 4) guardar/ajustar saldo 5) confirmar.
     """
+    from src.bot.calculator import calculadora_command, _registrar_pending
+
+    # Si veníamos esperando que el usuario escriba una categoría propia desde
+    # la calculadora (botón "✏️ Otra…"), este texto ES esa categoría -- no un
+    # gasto nuevo que mandar al LLM. Ver calculator.calc_categoria_callback.
+    pending_cat = context.user_data.pop('calc_await_categoria', None)
+    if pending_cat is not None:
+        categoria = user_message.strip()
+        if not categoria:
+            context.user_data['calc_await_categoria'] = pending_cat
+            await update.message.reply_text("✏️ Escríbame el nombre de la categoría (no puede ir vacío):")
+            return
+        pending_cat['categoria'] = categoria
+        pending_cat['descripcion'] = categoria
+        await _registrar_pending(update, context, pending_cat)
+        return
+
+    # Atajo del botón fijo "🧮 Calculadora" (teclado de respuesta persistente).
+    if user_message.strip().lower() in ("calculadora", "🧮 calculadora"):
+        await calculadora_command(update, context)
+        return
+
     if user_message.strip().lower() in ("menu", "menú", "m"):
         await menu_command(update, context)
         return
@@ -590,7 +613,11 @@ async def handle_text_message(user_message: str, update: Update, context: Contex
 
         dynamic_categories = db.get_dynamic_categories(perfil)
         prompt = build_prompt(user_message, categories, dynamic_categories)
-        expense_data = llm_connector.generate(prompt)
+        # Gemini se llama con urllib bloqueante; se corre en un hilo aparte para
+        # NO congelar el event loop del bot mientras Gemini responde (o se satura
+        # con reintentos). Sin esto, una llamada lenta/429 bloquea a todos los
+        # usuarios y los jobs de salud (ver incidente 2026-07-16).
+        expense_data = await asyncio.to_thread(llm_connector.generate, prompt)
         logger.debug(f"Datos extraídos: {expense_data}")
 
         is_valid, error_message = validate_expense_data(expense_data, categories)
@@ -656,11 +683,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     photo_file = await photo.get_file()
     image_bytes = bytes(await photo_file.download_as_bytearray())
 
-    await _procesar_foto(update, context, image_bytes, "image/jpeg")
+    # En Telegram se puede escribir un comentario debajo de la imagen (caption).
+    # Lo pasamos como contexto para que Gemini aclare la captura (ver
+    # build_image_prompt): ej. "esto fue comida", "pagué el diezmo".
+    await _procesar_foto(update, context, image_bytes, "image/jpeg",
+                         caption=update.message.caption)
 
 
 async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                          image_bytes: bytes, mime_type: str) -> None:
+                          image_bytes: bytes, mime_type: str, caption: str = None) -> None:
     """Analiza la captura ya descargada con Gemini Vision y decide el flujo
     según 'captura_tipo' -- separado de handle_photo para poder reusarlo
     cuando la captura quedó pendiente esperando la cédula del usuario (ver
@@ -673,8 +704,10 @@ async def _procesar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     try:
         dynamic_categories = db.get_dynamic_categories(perfil)
-        data = llm_connector.analyze_image(image_bytes, categories, dynamic_categories,
-                                            mime_type=mime_type)
+        # Bloqueante (urllib) -> en hilo aparte para no congelar el event loop.
+        data = await asyncio.to_thread(
+            llm_connector.analyze_image, image_bytes, categories, dynamic_categories,
+            mime_type, caption)
         logger.debug(f"Datos extraídos de la imagen: {data}")
 
         captura_tipo = data.get('captura_tipo')
@@ -749,7 +782,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         audio_bytes = bytes(await voice_file.download_as_bytearray())
 
         dynamic_categories = db.get_dynamic_categories(perfil)
-        data = llm_connector.transcribe_and_parse_audio(audio_bytes, categories, dynamic_categories)
+        # Bloqueante (urllib) -> en hilo aparte para no congelar el event loop.
+        data = await asyncio.to_thread(
+            llm_connector.transcribe_and_parse_audio, audio_bytes, categories, dynamic_categories)
         logger.debug(f"Datos extraídos del audio: {data}")
 
         is_valid, error_message = validate_expense_data(data, categories)

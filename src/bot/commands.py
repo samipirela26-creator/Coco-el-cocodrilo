@@ -43,7 +43,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _is_allowed(update, context):
         return
     accion = (query.data or "").split(":", 1)[-1]
-    if accion == "saldo":
+    if accion == "calculadora":
+        from src.bot.calculator import calculadora_command
+        await calculadora_command(update, context)
+    elif accion == "saldo":
         await saldo_command(update, context)
     elif accion == "resumen":
         await resumen_command(update, context)

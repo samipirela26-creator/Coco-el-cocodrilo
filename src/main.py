@@ -31,6 +31,7 @@ from src.bot.handlers import (
     cuenta_nueva_callback, tipo_transferencia_callback, efectivo_categoria_callback,
     deshacer_transferencia_callback, deshacer_transferencia_confirmacion_callback,
 )
+from src.bot.calculator import calculadora_command, calc_callback, calc_categoria_callback
 
 logger = None
 
@@ -207,11 +208,68 @@ async def send_weekly_report(context) -> None:
                 logger.error(f"No se pudo enviar el reporte semanal a {user_id} ({perfil}): {e}")
 
 
+# Clave del flag (en bot_state) que marca que el aviso de la calculadora ya
+# se mandó -- así el broadcast se envía UNA sola vez y no se repite en cada
+# reinicio del servicio. Si algún día hay otro aviso masivo, se usa una clave
+# nueva (v2, v3, ...) sin borrar la vieja.
+ANUNCIO_CALCULADORA_FLAG = 'anuncio_calculadora_v1'
+
+ANUNCIO_CALCULADORA_TEXTO = (
+    "🐊 *Novedad del banco, patrón*\n\n"
+    "Le cuento que ahora tiene una *calculadora* aquí mismo en el chat para "
+    "meter su dinero a mano: escribe el monto botón por botón, elige la divisa "
+    "(Bs, USD o COP) arriba y la categoría con botones.\n\n"
+    "¿Para qué la puse? Para *evitar errores*: al teclear el monto en la "
+    "calculadora y elegir todo con botones, ya no hay margen para que un número "
+    "se lea mal o se le cuele un gasto mal escrito. Los montos van en el formato "
+    "de acá: 1.234,56.\n\n"
+    "Ábrala cuando guste con /calculadora, con el botón 🧮 del /menu, o con el "
+    "botón *🧮 Calculadora* que le dejé aquí abajo."
+)
+
+
+async def send_update_announcement(context) -> None:
+    """Job run_once al arrancar: manda UNA sola vez el aviso de la calculadora
+    a todas las cuentas de Telegram de todos los perfiles registrados. Guarda
+    un flag en bot_state para no repetirlo en cada reinicio del servicio
+    (ver ANUNCIO_CALCULADORA_FLAG). Reusa el mismo patrón de broadcast que
+    send_morning_rates."""
+    db: DBClient = context.bot_data['db']
+    if db.estado_get(ANUNCIO_CALCULADORA_FLAG) == '1':
+        return
+    config_mapping = context.bot_data.get('profile_to_user_ids') or {}
+    profile_to_user_ids = _perfiles_con_user_ids(config_mapping, db)
+    if not profile_to_user_ids:
+        return
+
+    enviados = 0
+    ya_avisados = set()
+    for user_ids in profile_to_user_ids.values():
+        for user_id in user_ids:
+            if user_id in ya_avisados:
+                continue
+            ya_avisados.add(user_id)
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=ANUNCIO_CALCULADORA_TEXTO,
+                    parse_mode='Markdown',
+                    reply_markup=_tasas_reply_keyboard(),
+                )
+                enviados += 1
+            except Exception as e:
+                logger.error(f"No se pudo enviar el aviso de la calculadora a {user_id}: {e}")
+
+    db.estado_set(ANUNCIO_CALCULADORA_FLAG, '1')
+    logger.info(f"Aviso de la calculadora enviado a {enviados} usuario(s).")
+
+
 # Comandos públicos: visibles para cualquiera en el botón de menú (☰) de
 # Telegram, junto al cuadro de texto -- sin esto, Telegram no sabe qué
 # comandos tiene el bot y ese menú aparece vacío.
 COMANDOS_PUBLICOS = [
     BotCommand("menu", "Ver el menú con botones"),
+    BotCommand("calculadora", "Meter dinero con calculadora (Bs/USD/COP)"),
     BotCommand("saldo", "Ver sus saldos por billetera"),
     BotCommand("resumen", "Resumen del mes (gastos por categoría)"),
     BotCommand("cambio", "Tasas de cambio actuales (BCV/paralelo)"),
@@ -307,6 +365,7 @@ def main():
         application.add_handler(CommandHandler("diezmo", diezmo_command))
         application.add_handler(CommandHandler("diezmo_pagado", diezmo_pagado_command))
         application.add_handler(CommandHandler("menu", menu_command))
+        application.add_handler(CommandHandler("calculadora", calculadora_command))
         application.add_handler(CommandHandler("bloquear", bloquear_command))
         application.add_handler(CommandHandler("desbloquear", desbloquear_command))
         application.add_handler(CommandHandler("bloqueados", bloqueados_command))
@@ -315,6 +374,8 @@ def main():
         application.add_handler(CommandHandler("metas", metas_command))
         application.add_handler(CommandHandler("meta_nueva", meta_nueva_command))
         application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^coco_menu:"))
+        application.add_handler(CallbackQueryHandler(calc_callback, pattern=r"^coco_calc:"))
+        application.add_handler(CallbackQueryHandler(calc_categoria_callback, pattern=r"^coco_calccat:"))
         application.add_handler(CallbackQueryHandler(resumen_nav_callback, pattern=r"^coco_resumen:"))
         application.add_handler(CallbackQueryHandler(deshacer_callback, pattern=r"^coco_deshacer:"))
         application.add_handler(CallbackQueryHandler(deshacer_confirmacion_callback, pattern=r"^coco_deshacerconf:"))
@@ -347,6 +408,13 @@ def main():
                 name="latido_salud",
             )
             logger.info("Job de latido de salud (cada 60s) programado.")
+
+            application.job_queue.run_once(
+                send_update_announcement,
+                when=15,
+                name="aviso_calculadora",
+            )
+            logger.info("Aviso de la calculadora programado (una sola vez al arrancar).")
 
             application.job_queue.run_daily(
                 send_morning_rates,

@@ -38,6 +38,12 @@ Rana (el otro asistente del usuario) pero con oficio distinto: banquero, no
 mayordomo, asi que eres mas confianzudo y con un toque de humor seco de
 cocodrilo -- MUY LIGERO, nunca forzado:
 - Trato de USTED, siempre. Diccion cuidada, como un banquero de sociedad.
+- FORMA DE DIRIGIRSE AL USUARIO: llamelo "patron" (asi, "patron"). Ese es el
+  unico tratamiento que usa Coco para el usuario. NUNCA use "su merced", "mi
+  señor", "señor", "caballero", "don", "mi amo" ni ninguna otra formula
+  parecida -- solo "patron". No hace falta meterlo en cada frase; uselo con
+  naturalidad, como quien saluda o remata ("Listo, patron", "Como diga,
+  patron"), sin que suene repetitivo.
 - RASGO DE CARACTER (su "giro" personal, no un chiste suelto): a Coco, como
   buen cocodrilo, le nace un instinto de atesorar -- habla de cada ahorro o
   saldo sano como si fuera una pieza valiosa que guarda celosamente en su
@@ -216,7 +222,7 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
     return f"{system_prompt}\n\nUsuario: {user_message}\n\nAsistente:"
 
 
-def build_image_prompt(categories: list, dynamic_categories: list = None) -> str:
+def build_image_prompt(categories: list, dynamic_categories: list = None, caption: str = None) -> str:
     """
     Prompt para analizar una captura de pantalla (transferencia o saldo bancario).
 
@@ -236,6 +242,23 @@ def build_image_prompt(categories: list, dynamic_categories: list = None) -> str
     today = datetime.now().strftime("%Y-%m-%d")
     categories_str = '", "'.join(categories)
     dynamic_categories_str = '", "'.join(dynamic_categories) if dynamic_categories else ""
+
+    # En Telegram el usuario puede escribir un comentario (caption) debajo de la
+    # imagen -- ej. "esto fue comida", "pagué el diezmo", "este es mi saldo de
+    # Binance". Ese texto es contexto valioso que aclara la captura, así que se
+    # inyecta en el prompt para que Gemini lo tenga en cuenta (la imagen manda
+    # para los montos/fechas, pero el comentario ayuda con tipo/categoría/cuenta).
+    caption_hint = ""
+    if caption and caption.strip():
+        caption_hint = f"""
+
+COMENTARIO DEL USUARIO junto a la imagen (téngalo MUY en cuenta -- aclara la
+captura, ej. si fue gasto o ingreso, en qué categoría, de qué cuenta o si es un
+diezmo): "{caption.strip()}"
+Si el comentario contradice lo que se ve en la imagen para el tipo/categoría/
+cuenta, dale prioridad al comentario (el usuario sabe qué fue). Los montos,
+fechas y saldos SÍ se leen de la imagen salvo que el comentario los corrija
+explícitamente."""
 
     system_prompt = f"""Eres un asistente contable personal que analiza capturas de pantalla
 de aplicaciones bancarias o de pago (ej. Banesco, Mercantil, BDV, Binance, Zelle, Pago Móvil).
@@ -263,6 +286,24 @@ Reglas adicionales:
   * Si es Binance (o similar) mostrando saldo de USDT/dólares digitales, usa "moneda": "USD" y "cuenta": "Binance".
   * Si es cualquier otra app/billetera en dólares que no sea Binance, usa "cuenta": "Efectivo".
 - Si no hay fecha visible, asume hoy.
+- LECTURA DEL MONTO (crítico -- aquí es donde más se falla):
+  * Los montos en estas capturas vienen en FORMATO VENEZOLANO: el punto "." es
+    separador de MILES y la coma "," es el separador DECIMAL. Ejemplos:
+    "1.350,00" son mil trescientos cincuenta (monto=1350.00), NO 1.35 ni 135000;
+    "35.000,50" son treinta y cinco mil (monto=35000.50); "Bs. 980,00" son
+    novecientos ochenta (monto=980.00). En el JSON el "monto" va SIEMPRE como
+    número normal con punto decimal (ej. 1350.00, 35000.50, 980.00).
+  * El COP (pesos colombianos) usa el mismo formato ("120.000" = ciento veinte mil).
+  * El USD suele venir con punto decimal gringo ("12.50" = doce con cincuenta);
+    si ves un símbolo "$" o "USDT", trátalo como USD y respeta ese formato.
+  * NO confundas el monto con otros números de la captura: el número de
+    OPERACIÓN/REFERENCIA (suele ser largo, 8-12 dígitos, sin decimales), la
+    CÉDULA, el TELÉFONO o el NÚMERO DE CUENTA NO son el monto. El monto es la
+    cantidad que aparece junto al símbolo de moneda (Bs, Bs.S, $, USDT) o
+    etiquetada como "Monto", "Total", "Importe", "Valor" o "Saldo".
+  * Si dudas entre dos cifras, elige la que está junto al símbolo de moneda o
+    bajo una etiqueta de monto/total, nunca la referencia ni la cuenta.
+{caption_hint}
 
 IMPORTANTE: Responde SOLO con el JSON, sin texto adicional, sin markdown."""
 

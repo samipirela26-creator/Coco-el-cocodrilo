@@ -25,6 +25,7 @@ async def _reply_photo(update: Update, photo_bytes: bytes, caption: str = None, 
 
 def _menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧮 Calculadora", callback_data="coco_menu:calculadora")],
         [InlineKeyboardButton("Saldo", callback_data="coco_menu:saldo"),
          InlineKeyboardButton("Resumen", callback_data="coco_menu:resumen")],
         [InlineKeyboardButton("Cambio", callback_data="coco_menu:cambio"),
@@ -156,7 +157,7 @@ def _tasas_reply_keyboard() -> ReplyKeyboardMarkup:
     quien ya usaba el bot antes de este botón existir (pedido explícito del
     usuario, 2026-07-09)."""
     return ReplyKeyboardMarkup(
-        [["💱 Tasas"]],
+        [["💱 Tasas", "🧮 Calculadora"]],
         resize_keyboard=True,
         is_persistent=True,
     )
